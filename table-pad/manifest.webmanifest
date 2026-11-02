@@ -1,0 +1,14 @@
+{
+  "id": "./index.html",
+  "name": "table-pad 株式リサーチ",
+  "short_name": "table-pad",
+  "description": "表・チャート・日本株ウォッチリスト・CSVベースのスクリーニング",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1117",
+  "theme_color": "#0f1117",
+  "icons": [{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
+}
