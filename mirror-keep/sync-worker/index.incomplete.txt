@@ -1,0 +1,2219 @@
+!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>クイック参照 – 統合版</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#007AFF">
+
+<style>
+:root {
+--bg: #F7F7F8;
+--text: #1C1C1E;
+--text-secondary: #6C6C70;
+--border: #E5E5EA;
+--card-bg: #FFFFFF;
+--accent: #007AFF;
+--accent-press: #005ECB;
+--danger: #FF3B30;
+--radius: 14px;
+}
+
+/* 基本レイアウト */
+body {
+margin: 0;
+padding: 0;
+background: var(--bg);
+font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+color: var(--text);
+-webkit-user-select: none;
+user-select: none;
+}
+
+.loading-overlay {
+position: fixed;
+inset: 0;
+background: var(--bg);
+display: flex;
+align-items: center;
+justify-content: center;
+font-size: 18px;
+z-index: 100;
+transition: opacity .25s;
+}
+.loading-overlay.hidden { opacity: 0; pointer-events: none; }
+
+.sheet { transform: translateY(100%); transition: transform .22s ease-out; }
+.sheet {
+position: fixed;
+inset: auto 0 0;
+z-index: 30;
+max-height: 92dvh;
+background: var(--card-bg);
+border-radius: 18px 18px 0 0;
+box-shadow: 0 -8px 30px rgba(0, 0, 0, .16);
+pointer-events: none;
+}
+.sheet.open { transform: translateY(0); pointer-events: auto; }
+#aiPanel.open { transform: translateY(0) !important; }
+.overlay.open { opacity: 1; pointer-events: auto; }
+
+.overlay {
+position: fixed;
+inset: 0;
+z-index: 25;
+background: rgba(0, 0, 0, .28);
+opacity: 0;
+pointer-events: none;
+transition: opacity .2s;
+}
+
+.share-banner { display: none; }
+.share-banner.show {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 10px;
+margin: 12px 16px 0;
+padding: 10px 12px;
+background: var(--card-bg);
+border: 1px solid var(--border);
+border-radius: 12px;
+}
+.empty {
+padding: 48px 20px 140px;
+text-align: center;
+color: var(--text-secondary);
+line-height: 1.8;
+}
+
+.quick-dock {
+position: fixed;
+left: 50%;
+bottom: max(12px, env(safe-area-inset-bottom));
+z-index: 22;
+display: flex;
+gap: 6px;
+width: min(calc(100% - 24px), 430px);
+padding: 8px;
+transform: translateX(-50%);
+background: rgba(255, 255, 255, .92);
+border: 1px solid var(--border);
+border-radius: 18px;
+box-shadow: 0 6px 24px rgba(0, 0, 0, .14);
+backdrop-filter: blur(14px);
+}
+.dock-btn {
+flex: 1;
+min-width: 0;
+min-height: 46px;
+padding: 5px 3px;
+border: 0;
+border-radius: 12px;
+background: transparent;
+color: var(--text);
+font-size: 19px;
+cursor: pointer;
+}
+.dock-btn:active { background: var(--bg); }
+.dock-label {
+display: block;
+margin-top: 1px;
+font-size: 10px;
+white-space: nowrap;
+}
+.dock-add { color: var(--accent); font-weight: 700; }
+
+.sheet-header {
+display: grid;
+grid-template-columns: 1fr auto 1fr;
+align-items: center;
+gap: 8px;
+padding: 14px 16px 10px;
+border-bottom: 1px solid var(--border);
+}
+.sheet-header h2 { margin: 0; font-size: 17px; text-align: center; }
+.sheet-header button:last-child { justify-self: end; }
+.sheet-header button { min-height: 36px; padding: 6px 10px; border: 0; background: none; color: var(--accent); font-size: 14px; }
+.sheet-body { max-height: calc(92dvh - 64px); overflow-y: auto; padding: 16px; overscroll-behavior: contain; }
+
+.voice-modal, .memo-popup, .review-overlay, .icon-overlay, .icon-modal, .add-guide, .pin-overlay, .pin-modal { pointer-events: none; }
+.voice-modal.open, .memo-popup.open, .review-overlay.open, .icon-overlay.open, .icon-modal.open, .add-guide.open, .pin-overlay.open, .pin-modal.open { pointer-events: auto; }
+.voice-modal, .memo-popup, .review-overlay, .add-guide, .pin-overlay { position: fixed; inset: 0; z-index: 40; opacity: 0; visibility: hidden; transition: opacity .2s, visibility .2s; }
+.voice-modal.open, .memo-popup.open, .review-overlay.open, .add-guide.open, .pin-overlay.open { opacity: 1; visibility: visible; }
+.voice-modal, .memo-popup, .review-overlay, .add-guide, .pin-overlay { background: rgba(0, 0, 0, .28); }
+.voice-sheet, .memo-popup > *, .review-sheet, .add-guide-sheet, .pin-sheet { pointer-events: auto; }
+.voice-sheet, .review-sheet, .add-guide-sheet, .pin-sheet { position: absolute; left: 0; right: 0; bottom: 0; max-height: 92dvh; overflow-y: auto; background: var(--card-bg); border-radius: 18px 18px 0 0; padding: 16px; }
+.memo-popup { background: var(--card-bg); }
+.memo-popup > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+.memo-popup-editor { min-height: 50vh; padding: 16px; outline: none; overflow-y: auto; }
+
+.action-sheet {
+position: fixed;
+left: 0;
+right: 0;
+bottom: 0;
+z-index: 35;
+max-height: 92dvh;
+overflow-y: auto;
+padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+background: var(--card-bg);
+border-radius: 18px 18px 0 0;
+box-shadow: 0 -8px 30px rgba(0, 0, 0, .16);
+transform: translateY(100%);
+transition: transform .22s ease-out;
+pointer-events: none;
+}
+.action-sheet.open { transform: translateY(0); pointer-events: auto; }
+.action-btn { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; margin: 6px 0; padding: 10px 12px; text-align: left; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); color: var(--text); cursor: pointer; }
+.action-icon { flex: 0 0 28px; text-align: center; font-size: 20px; }
+.action-btn-inner { min-width: 0; }
+.action-label, .action-desc { display: block; }
+.action-label { font-weight: 700; }
+.action-desc { margin-top: 2px; color: var(--text-secondary); font-size: 12px; }
+
+.icon-overlay {
+position: fixed;
+inset: 0;
+z-index: 40;
+background: rgba(0, 0, 0, .28);
+opacity: 0;
+transition: opacity .2s;
+}
+.icon-overlay.open { opacity: 1; }
+.icon-modal {
+position: fixed;
+left: 50%;
+top: 50%;
+z-index: 41;
+width: min(92vw, 520px);
+max-height: 88dvh;
+overflow-y: auto;
+padding: 16px;
+background: var(--card-bg);
+border-radius: 18px;
+box-shadow: 0 12px 40px rgba(0, 0, 0, .22);
+opacity: 0;
+transform: translate(-50%, -46%) scale(.97);
+transition: opacity .2s, transform .2s;
+}
+.icon-modal.open { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+.img-preview-overlay {
+position: fixed;
+inset: 0;
+z-index: 42;
+display: flex;
+align-items: center;
+justify-content: center;
+background: rgba(0, 0, 0, .72);
+opacity: 0;
+visibility: hidden;
+pointer-events: none;
+}
+.img-preview-overlay.open { opacity: 1; visibility: visible; pointer-events: auto; }
+.img-preview-img { max-width: 92vw; max-height: 86vh; object-fit: contain; }
+
+.pin-modal {
+position: fixed;
+left: 50%;
+top: 50%;
+z-index: 41;
+width: min(90vw, 420px);
+padding: 18px;
+background: var(--card-bg);
+border-radius: 18px;
+opacity: 0;
+visibility: hidden;
+transform: translate(-50%, -46%) scale(.97);
+transition: opacity .2s, visibility .2s, transform .2s;
+}
+.pin-modal.open { opacity: 1; visibility: visible; transform: translate(-50%, -50%) scale(1); }
+
+@media (max-width: 430px) {
+header { padding-left: 12px; padding-right: 12px; }
+.header-actions { gap: 4px; }
+.icon-btn, .review-btn { padding: 7px 5px; font-size: 19px; }
+#cardList { padding: 12px; }
+.quick-dock { gap: 2px; padding: 6px; }
+.dock-btn { min-height: 44px; font-size: 18px; }
+.dock-label { font-size: 9px; }
+.share-banner.show { margin-left: 12px; margin-right: 12px; }
+}
+
+/* ヘッダー */
+header {
+padding: env(safe-area-inset-top) 16px 12px;
+background: var(--card-bg);
+border-bottom: 1px solid var(--border);
+position: sticky;
+top: 0;
+z-index: 20;
+}
+
+.header-top {
+display: flex;
+align-items: center;
+justify-content: space-between;
+}
+
+.header-actions {
+display: flex;
+align-items: center;
+gap: 10px;
+}
+
+.icon-btn, .review-btn {
+background: none;
+border: none;
+font-size: 20px;
+cursor: pointer;
+padding: 4px;
+}
+
+.review-badge {
+position: absolute;
+top: -4px;
+right: -4px;
+background: #FF3B30;
+color: #fff;
+font-size: 11px;
+padding: 2px 5px;
+border-radius: 10px;
+}
+
+/* 検索 */
+.search-row {
+margin-top: 12px;
+display: flex;
+align-items: center;
+background: var(--bg);
+border: 1px solid var(--border);
+border-radius: 10px;
+padding: 6px 10px;
+}
+
+.search-row input {
+flex: 1;
+border: none;
+background: transparent;
+font-size: 15px;
+padding: 6px;
+}
+
+.search-clear {
+background: none;
+border: none;
+font-size: 16px;
+color: var(--text-secondary);
+cursor: pointer;
+display: none;
+}
+.search-clear.visible { display: block; }
+
+/* タグフィルタ */
+.tag-filter-row {
+margin-top: 10px;
+display: flex;
+gap: 6px;
+flex-wrap: wrap;
+}
+
+.filter-chip {
+padding: 6px 12px;
+border-radius: 20px;
+border: 1px solid var(--border);
+background: var(--card-bg);
+font-size: 13px;
+cursor: pointer;
+}
+.filter-chip.active {
+background: var(--accent);
+color: #fff;
+border-color: var(--accent);
+}
+
+/* カード一覧 */
+#cardList {
+padding: 16px;
+}
+
+.card {
+background: var(--card-bg);
+border: 1px solid var(--border);
+border-radius: var(--radius);
+padding: 14px;
+margin-bottom: 12px;
+cursor: pointer;
+}
+
+.card-title {
+font-size: 17px;
+font-weight: 700;
+margin-bottom: 6px;
+}
+
+.card-snippet {
+font-size: 14px;
+color: var(--text-secondary);
+margin-bottom: 8px;
+}
+
+.chips {
+display: flex;
+flex-wrap: wrap;
+gap: 6px;
+margin-bottom: 8px;
+}
+
+.chip {
+background: var(--bg);
+border-radius: 10px;
+padding: 3px 8px;
+font-size: 12px;
+}
+
+.card-meta {
+display: flex;
+gap: 10px;
+font-size: 13px;
+color: var(--text-secondary);
+}
+.toast {
+position: fixed;
+left: 50%;
+bottom: calc(env(safe-area-inset-bottom, 0px) + 24px);
+transform: translateX(-50%) translateY(12px);
+background: var(--card-bg, #222);
+color: var(--text, #fff);
+border: 1px solid var(--border, #444);
+padding: 10px 20px;
+border-radius: 100px;
+font-size: 13px;
+font-weight: 600;
+z-index: 60;
+opacity: 0;
+pointer-events: none;
+transition: opacity .2s, transform .2s;
+}
+.toast.show {
+opacity: 1;
+transform: translateX(-50%) translateY(0);
+}
+</style>
+</head>
+<body>
+<div class="loading-overlay" id="loadingOverlay">読み込み中…</div>
+
+<header>
+<div class="header-top">
+<h1>クイック参照</h1>
+<div class="header-actions">
+<span id="countLabel">0件</span>
+<button class="review-btn" id="reviewBtn">📋<span class="review-badge" id="reviewBadge"></span></button>
+<button class="icon-btn" id="lockToggleBtn">🔓</button>
+<button class="icon-btn" id="settingsBtn">⚙️</button>
+<button class="icon-btn" id="menuBtn">☰</button>
+</div>
+</div>
+
+<div class="search-row">
+<span class="search-icon">🔍</span>
+<input type="search" id="searchInput" placeholder="タイトル・メモ・タグで検索">
+<button class="search-clear" id="searchClear">✕</button>
+</div>
+
+<div class="tag-filter-row" id="tagFilterRow"></div>
+</header>
+<!-- 共有テキストバナー -->
+<div id="shareReceivedBanner" class="share-banner">
+<span id="shareReceivedText"></span>
+<div class="share-banner-actions">
+<button id="shareReceivedUse">追加する</button>
+<button id="shareReceivedDismiss">閉じる</button>
+</div>
+</div>
+
+<!-- 空状態 -->
+<div class="empty" id="emptyState" style="display:none;">
+まだ何もありません。<br>右下の＋から追加してください。
+</div>
+
+<!-- カード一覧 -->
+<div id="cardList"></div>
+
+<!-- Quick Dock -->
+<div class="quick-dock" id="quickDock">
+<button class="dock-btn dock-mic" id="voiceFab">🎙<span class="dock-label">音声</span></button>
+<button class="dock-btn dock-cam" id="dockCam">📷<span class="dock-label">カメラ</span></button>
+<button class="dock-btn dock-photo" id="dockPhoto">🖼<span class="dock-label">写真</span></button>
+<button class="dock-btn dock-video" id="dockVideo">🎬<span class="dock-label">動画</span></button>
+<button class="dock-btn dock-add" id="fabBtn">＋<span class="dock-label">追加</span></button>
+</div>
+
+<!-- ファイル入力 -->
+<input type="file" id="imgFileInput" accept="image/*" multiple style="display:none">
+<input type="file" id="imgCameraInput" accept="image/*" capture="environment" style="display:none">
+<input type="file" id="imgSelfieInput" accept="image/*" capture="user" style="display:none">
+<input type="file" id="videoFileInput" accept="video/*" multiple style="display:none">
+<input type="file" id="videoCamInput" accept="video/*" capture="environment" style="display:none">
+
+<!-- 音声モーダル -->
+<div class="voice-modal" id="voiceModal">
+<div class="voice-sheet">
+<div class="voice-sheet-handle"></div>
+<div class="voice-status" id="voiceStatus">
+<span class="voice-dot" id="voiceDot" style="display:none;"></span>
+<span id="voiceStatusText">マイクで話してください</span>
+</div>
+
+<div class="voice-transcript" id="voiceTranscript">
+<span id="voiceFinal"></span>
+<span class="voice-interim" id="voiceInter"></span>
+</div>
+
+<div class="voice-actions">
+<button class="voice-stop-btn" id="voiceStopBtn">⏹ 停止</button>
+<button class="voice-analyze-btn" id="voiceAnalyzeBtn" disabled>✨ AI で整理する</button>
+</div>
+
+<!-- AI Preview -->
+<div id="aiPreviewArea" style="display:none;">
+<input type="hidden" id="aiTags">
+<div id="aiFields" style="display:none;"></div>
+<div class="ai-preview">
+<div class="ai-preview-header">🤖 AI が整理した内容</div>
+<div class="ai-preview-body">
+<div class="ai-field">
+<div class="ai-field-label">タイトル</div>
+<div class="ai-field-value"><input type="text" id="aiTitle"></div>
+</div>
+
+<div class="ai-field">
+<div class="ai-field-label">タグ</div>
+<div class="ai-field-value ai-tags-row" id="aiTagsRow"></div>
+</div>
+
+<div class="ai-field">
+<div class="ai-field-label">メモ</div>
+<div class="ai-field-value"><textarea id="aiBody"></textarea></div>
+</div>
+</div>
+</div>
+<button class="voice-save-btn" id="aiSaveBtn">💾 この内容で保存</button>
+</div>
+
+<button class="voice-cancel-btn" id="voiceCancelBtn">キャンセル</button>
+</div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+
+<!-- 編集シート -->
+<div class="sheet" id="editSheet">
+<div class="sheet-handle"></div>
+
+<div class="sheet-header">
+<button id="cancelBtn">キャンセル</button>
+<h2 id="sheetTitle">新規追加</h2>
+<button class="save" id="saveBtn">保存</button>
+</div>
+
+<div class="sheet-body">
+<label class="field-label">タイトル</label>
+<input type="text" id="fTitle" placeholder="タイトルを入力" maxlength="100"
+autocapitalize="sentences" autocorrect="on" spellcheck="true">
+
+<label class="field-label">タグ</label>
+<div class="tag-input-row">
+<input type="text" id="tagInput" placeholder="タグを入力" maxlength="30"
+autocapitalize="none" autocorrect="off" spellcheck="false">
+<button id="tagAddBtn">追加</button>
+</div>
+<div class="tag-chips" id="tagChips"></div>
+<div class="tag-suggestions" id="tagSuggestions"></div>
+
+<div class="toggle-row" style="margin-top:16px;">
+<div class="toggle-row-text">
+<span class="toggle-row-title">個人情報として保護</span>
+<span class="toggle-row-desc">メモ・構造化項目を暗号化します（タイトル・タグは保護されません）</span>
+</div>
+<label class="switch">
+<input type="checkbox" id="sensitiveToggle">
+<span class="switch-track"></span>
+</label>
+</div>
+
+<label class="field-label">URL（任意）</label>
+<div class="url-field-row">
+<input type="text" id="inputUrl" placeholder="https://...">
+<button type="button" class="open-link-btn" id="previewUrlBtn">→</button>
+</div>
+
+<label class="field-label">メモ</label>
+<div class="rich-editor-wrap">
+<div class="rich-toolbar">
+<button type="button" onclick="fmtCmd('bold')"><strong>B</strong></button>
+<button type="button" onclick="fmtCmd('italic')"><em>I</em></button>
+<button type="button" onclick="fmtCmd('underline')"><u>U</u></button>
+<span class="sep"></span>
+<button type="button" onclick="fmtMark('yellow')">🟡</button>
+<button type="button" onclick="fmtMark('green')">🟢</button>
+<button type="button" onclick="fmtMark('pink')">🩷</button>
+<button type="button" onclick="fmtCmd('removeFormat')" style="font-size:13px;color:var(--text-secondary);">✕fmt</button>
+</div>
+
+<div class="rich-editor" id="fBody" contenteditable="true" data-placeholder="内容を入力"
+autocorrect="on" autocapitalize="sentences" spellcheck="true"></div>
+
+<button type="button" class="expand-btn" id="expandMemoBtn">⛶ 全画面</button>
+</div>
+<!-- 構造化フィールド -->
+<label class="field-label" style="margin-top:18px;">構造化項目</label>
+<div id="fieldRows"></div>
+<button type="button" id="addFieldBtn" class="add-field-btn">＋ 項目を追加</button>
+
+<!-- 画像添付 -->
+<label class="field-label" style="margin-top:18px;">画像</label>
+<div class="img-btn-row">
+<button type="button" id="imgPickBtn">📁 選択</button>
+<button type="button" id="imgCameraBtn">📷 カメラ</button>
+<button type="button" id="imgSelfieBtn">🤳 自撮り</button>
+<button type="button" id="imgIllustBtn">🎨 illust-studio</button>
+</div>
+<div id="imgThumbs" class="img-thumbs"></div>
+
+<!-- 音声添付 -->
+<label class="field-label" style="margin-top:18px;">音声</label>
+<div class="audio-btn-row">
+<button type="button" id="recStartBtn">🎙 録音開始</button>
+<button type="button" id="recStopBtn">⏹ 停止</button>
+<button type="button" id="musicSuiteBtn">🎼 music-suite</button>
+</div>
+<div id="recStatus" class="rec-status">
+<span id="recTimer">00:00</span>
+</div>
+<div id="audioList" class="audio-list"></div>
+
+<!-- 動画添付 -->
+<label class="field-label" style="margin-top:18px;">動画</label>
+<div class="video-btn-row">
+<button type="button" id="videoCamBtn">📹 カメラ</button>
+<button type="button" id="videoPickBtn">📁 選択</button>
+</div>
+<div id="videoList" class="video-list"></div>
+
+<!-- 関連項目 -->
+<label class="field-label" style="margin-top:18px;">関連項目</label>
+<div id="relatedSection" class="related-section"></div>
+<button id="aiRelatedBtn" class="ai-related-btn">✨ AIでさらに探す</button>
+
+<!-- 危険ゾーン -->
+<div id="dangerZone" class="danger-zone" style="display:none;">
+<button id="deleteBtn" class="danger-btn">🗑 削除する</button>
+</div>
+</div>
+</div>
+
+<!-- 画像プレビュー -->
+<div id="imgPreviewOverlay" class="img-preview-overlay">
+<img id="imgPreviewImg" class="img-preview-img">
+<button id="imgPreviewClose" class="img-preview-close">✕</button>
+</div>
+
+<!-- 設定 / AI連携 -->
+<div class="sheet" id="settingsSheet" style="z-index:35;">
+<div class="sheet-handle"></div>
+<div class="sheet-header">
+<button id="settingsCancelBtn">閉じる</button>
+<h2>設定 / AI連携</h2>
+<button class="save" id="settingsSaveBtn">保存</button>
+</div>
+<div class="sheet-body">
+<label class="field-label">AIモデル選択</label>
+<div id="modelSelect" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+<button class="model-btn" data-model="claude">Claude</button>
+<button class="model-btn" data-model="gemini">Gemini</button>
+<button class="model-btn" data-model="openai">OpenAI</button>
+</div>
+<p id="modelDetail" style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;"></p>
+<label class="field-label">Claude APIキー</label>
+<input type="password" id="sClaudeKey" autocomplete="off">
+<label class="field-label">Gemini APIキー</label>
+<input type="password" id="sGeminiKey" autocomplete="off">
+<label class="field-label">OpenAI APIキー</label>
+<input type="password" id="sOpenAIKey" autocomplete="off">
+<label class="field-label">Proxyサーバー URL</label>
+<input type="url" id="sProxyUrl" autocomplete="off">
+<label class="field-label" style="margin-top:20px;">iCloud Drive連携</label>
+<div style="display:flex;gap:8px;flex-wrap:wrap;">
+<button id="icloudSaveBtn" style="flex:1;">今すぐiCloudに保存</button>
+<button id="icloudAutoToggleBtn" style="flex:1;">自動保存設定</button>
+</div>
+<div id="icloudStatus" style="font-size:12px;color:var(--text-secondary);"></div>
+<label class="field-label" style="margin-top:20px;">☁️ クラウド同期</label>
+<p style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin:4px 0 8px;">Safariタブとホーム画面PWA間でメモ（添付ファイルを除く）を同期します。</p>
+<input type="url" id="sSyncEndpoint" placeholder="https://sync-worker.arielfortuneoffice.workers.dev" autocomplete="off">
+<input type="password" id="sSyncToken" placeholder="同期トークン" autocomplete="off" style="margin-top:8px;">
+<button id="syncNowBtn" style="width:100%;margin-top:8px;">今すぐ同期</button>
+<div id="cloudSyncStatus" style="font-size:12px;color:var(--text-secondary);margin-top:6px;"></div>
+<button id="siriShortcutBtn" style="width:100%;margin-top:12px;">Shortcuts設定ガイド</button>
+<button id="sendToEcoBtn" style="width:100%;margin-top:8px;">全データを他アプリへ送信</button>
+</div>
+</div>
+
+<div id="aiPanel" style="position:fixed;bottom:0;left:0;right:0;z-index:45;background:var(--card-bg);border-top:1px solid var(--border);padding:12px 16px;transform:translateY(100%);transition:transform .22s;">
+<div style="display:flex;align-items:center;gap:8px;"><strong>AI</strong><span id="aiModelBadge"></span><span style="flex:1"></span><button id="aiPanelClose">✕</button></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
+<button class="ai-action-btn" data-action="summarize">要約</button>
+<button class="ai-action-btn" data-action="organize">整理</button>
+<button class="ai-action-btn" data-action="expand">補足</button>
+<button class="ai-action-btn" data-action="question">質問生成</button>
+</div>
+<div style="display:flex;gap:8px;"><input id="aiCustomPrompt" style="flex:1" placeholder="カスタム指示を入力"><button id="aiCustomSend">送信</button></div>
+<div id="aiResult" style="display:none;margin-top:10px;"></div>
+<div id="aiResultActions" style="display:none;gap:8px;margin-top:8px;"><button id="aiInsertBtn">メモに挿入</button><button id="aiReplaceBtn">置換</button></div>
+<div id="aiLoading" style="display:none;text-align:center;padding:12px;">生成中…</div>
+</div>
+
+<!-- メモ全画面編集 -->
+<div class="memo-popup" id="memoPopup">
+<div class="memo-popup-header">
+<button id="memoPopupClose">完了</button>
+<h2>メモ編集</h2>
+<div class="memo-popup-actions">
+<button id="memoAiBtn">✦ AI</button>
+<button id="memoPopupClear">書式クリア</button>
+</div>
+</div>
+
+<div class="memo-popup-toolbar">
+<button type="button" onclick="popupFmt('bold')"><strong>B</strong></button>
+<button type="button" onclick="popupFmt('italic')"><em>I</em></button>
+<button type="button" onclick="popupFmt('underline')"><u>U</u></button>
+<span class="sep"></span>
+<button type="button" onclick="popupMark('yellow')">🟡</button>
+<button type="button" onclick="popupMark('green')">🟢</button>
+<button type="button" onclick="popupMark('pink')">🩷</button>
+<span class="sep"></span>
+<button type="button" onclick="popupFmt('insertUnorderedList')">☰</button>
+</div>
+
+<div class="memo-popup-editor" id="memoPopupEditor"
+contenteditable="true" data-placeholder="内容を入力…"
+autocorrect="on" autocapitalize="sentences" spellcheck="true"></div>
+</div>
+
+<!-- デイリーレビュー -->
+<div class="review-overlay" id="reviewOverlay">
+<div class="review-sheet">
+<div class="review-header">
+<div class="review-header-top">
+<span class="review-title">📋 デイリーレビュー</span>
+<button class="review-close-btn" id="reviewCloseBtn">✕</button>
+</div>
+<div class="review-progress-track">
+<div class="review-progress-fill" id="reviewProgressFill"></div>
+</div>
+<div class="review-counter">
+<span id="reviewCounterText">0 / 0</span>
+<span id="reviewStreakLabel"></span>
+</div>
+</div>
+<div class="review-body" id="reviewBody"></div>
+</div>
+</div>
+
+<!-- メニュー -->
+<div class="overlay" id="menuOverlay"></div>
+<div class="action-sheet" id="menuSheet">
+<div class="action-sheet-handle"></div>
+<h3>データ管理</h3>
+
+<button type="button" class="action-btn" id="icloudMenuBtn">
+<span class="action-icon">☁️</span>
+<span class="action-btn-inner">
+<span class="action-label">iCloud Driveに保存</span>
+<span class="action-desc" id="icloudMenuDesc">ファイルアプリ経由で自動バックアップ</span>
+</span>
+</button>
+
+<button type="button" class="action-btn" id="exportBtn">
+<span class="action-icon">📤</span>
+<span class="action-btn-inner">
+<span class="action-label">JSONエクスポート</span>
+<span class="action-desc">全データをファイルに書き出す</span>
+</span>
+</button>
+
+<button type="button" class="action-btn" id="importBtn">
+<span class="action-icon">📥</span>
+<span class="action-btn-inner">
+<span class="action-label">JSONインポート</span>
+<span class="action-desc">バックアップから復元・マージ</span>
+</span>
+</button>
+
+<button type="button" class="action-btn" id="tagBridgeBtn">
+<span class="action-icon">🔗</span>
+<span class="action-btn-inner">
+<span class="action-label">タグを他アプリと共有</span>
+<span class="action-desc">illust-studio / music-suite などに同期</span>
+</span>
+</button>
+
+<button type="button" class="action-btn" id="kanseiExportBtn">
+<span class="action-icon">📝</span>
+<span class="action-btn-inner">
+<span class="action-label">素材を kansei に送る</span>
+<span class="action-desc">表示中の項目を執筆支援生成ツールへ</span>
+</span>
+</button>
+
+<button type="button" class="action-btn" id="iconGenBtn">
+<span class="action-icon">🎨</span>
+<span class="action-btn-inner">
+<span class="action-label">アイコンを生成・ダウンロード</span>
+<span class="action-desc">ホーム画面用 icon-192.png / icon-512.png</span>
+</span>
+</button>
+
+<button type="button" class="action-btn" id="themeUrlBtn">
+<span class="action-icon">🌐</span>
+<span class="action-btn-inner">
+<span class="action-label">テーマ別URL一覧を表示</span>
+<span class="action-desc">タグごとのホーム画面追加用URL</span>
+</span>
+</button>
+</div>
+<!-- アイコン生成モーダル -->
+<div id="iconOverlay" class="icon-overlay"></div>
+<div id="iconModal" class="icon-modal">
+<div class="icon-modal-header">
+<h3>アイコン生成</h3>
+<button id="iconModalClose">✕</button>
+</div>
+
+<div class="icon-config">
+<label>絵文字 / 文字</label>
+<input type="text" id="iconEmoji" maxlength="2" value="参">
+
+<label>背景色（上）</label>
+<input type="color" id="iconBgColor" value="#007AFF">
+
+<label>背景色（下）</label>
+<input type="color" id="iconBgColor2" value="#005ECB">
+
+<label>文字色</label>
+<input type="color" id="iconFgColor" value="#FFFFFF">
+
+<label>文字サイズ（%）</label>
+<input type="range" id="iconFontSize" min="40" max="90" value="70">
+</div>
+
+<div class="icon-preview-wrap">
+<canvas id="iconCanvas192" width="192" height="192"></canvas>
+<canvas id="iconCanvas512" width="512" height="512"></canvas>
+</div>
+
+<div class="icon-download-row">
+<button id="iconDl192">⬇️ 192px</button>
+<button id="iconDl512">⬇️ 512px</button>
+</div>
+</div>
+
+<!-- テーマモードバナー -->
+<div id="themeBanner" class="theme-banner" style="display:none;">
+<span id="themeBannerIcon" class="theme-banner-icon"></span>
+<div class="theme-banner-text">
+<span id="themeBannerLabel"></span>
+<span id="themeBannerSub"></span>
+</div>
+<div class="theme-banner-actions">
+<button id="themeBannerIconBtn">🎨 アイコン</button>
+<button id="themeBannerKanseiBtn">📝 kansei</button>
+<button id="themeBannerAddBtn">＋ ホーム追加</button>
+</div>
+</div>
+
+<!-- ホーム追加ガイド -->
+<div id="addGuide" class="add-guide">
+<div class="add-guide-sheet">
+<h3 id="addGuideTitle">ホーム画面に追加</h3>
+<p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
+Safari → 共有ボタン → 「ホーム画面に追加」で登録できます。
+</p>
+<div id="addGuideUrl" class="add-guide-url"></div>
+<button id="addGuideClose" class="add-guide-close">閉じる</button>
+</div>
+</div>
+
+<!-- iCloud ガイド -->
+<div id="icloudGuide" class="add-guide">
+<div class="add-guide-sheet">
+<h3>☁️ iCloud Drive に保存する方法</h3>
+<p style="font-size:13px;color:var(--text-secondary);line-height:1.6;">
+ダウンロードされた JSON を「ファイル」アプリで iCloud Drive に移動してください。
+</p>
+<div id="icloudGuideFilename" class="add-guide-url"></div>
+
+<div class="add-guide-step"><div class="add-guide-num">1</div><p>ダウンロードフォルダに保存されます</p></div>
+<div class="add-guide-step"><div class="add-guide-num">2</div><p>「ファイル」アプリ → 「最近使った項目」</p></div>
+<div class="add-guide-step"><div class="add-guide-num">3</div><p>ファイルを長押し → 「移動」</p></div>
+<div class="add-guide-step"><div class="add-guide-num">4</div><p>iCloud Drive → 任意のフォルダへ</p></div>
+<div class="add-guide-step"><div class="add-guide-num">5</div><p>Mac から Finder → iCloud Drive でアクセス可能</p></div>
+
+<button id="icloudGuideClose" class="add-guide-close">閉じる</button>
+</div>
+</div>
+
+<!-- バックアップバナー -->
+<div id="backupBanner" class="backup-banner" style="display:none;">
+<span id="backupBannerText"></span>
+<button id="backupBannerBtn">📤 エクスポート</button>
+</div>
+
+<!-- PIN モーダル -->
+<div id="pinOverlay" class="pin-overlay"></div>
+<div id="pinModal" class="pin-modal">
+<div class="pin-sheet">
+<h3 id="pinModalTitle">パスコードを設定</h3>
+<p id="pinModalDesc" class="pin-desc"></p>
+
+<input type="password" id="pinInput1" class="pin-input" placeholder="パスコード">
+<input type="password" id="pinInput2" class="pin-input" placeholder="確認用">
+
+<div id="pinError" class="pin-error" style="display:none;"></div>
+
+<button id="pinConfirmBtn" class="pin-confirm-btn">設定する</button>
+<button id="pinForgotBtn" class="pin-forgot-btn" style="display:none;">パスコードをリセット</button>
+<button id="pinCancelBtn" class="pin-cancel-btn">キャンセル</button>
+</div>
+</div>
+
+<!-- トースト -->
+<div id="toast" class="toast"></div>
+
+<!-- 共有ターゲット用ファイル入力 -->
+<input type="file" id="importFileInput" accept=".json,application/json" style="display:none">
+
+<!-- JS: DB / Crypto / Search / Attachments / AI / Review / Related / Ecosystem -->
+<script>
+'use strict';
+
+/* ─────────────────────────────
+DB LAYER（添付ファイル対応）
+───────────────────────────── */
+const DB_NAME = 'quickRefDB';
+const DB_VERSION = 2;
+let dbPromise = null;
+
+function openDB() {
+if (dbPromise) return dbPromise;
+dbPromise = new Promise((resolve, reject) => {
+const req = indexedDB.open(DB_NAME, DB_VERSION);
+req.onupgradeneeded = e => {
+const db = e.target.result;
+
+if (!db.objectStoreNames.contains('items')) {
+const s = db.createObjectStore('items', { keyPath: 'id' });
+s.createIndex('tags', 'tags', { multiEntry: true });
+s.createIndex('updatedAt', 'updatedAt');
+}
+
+if (!db.objectStoreNames.contains('attachments')) {
+const a = db.createObjectStore('attachments', { keyPath: 'id' });
+a.createIndex('itemId', 'itemId');
+}
+};
+req.onsuccess = e => resolve(e.target.result);
+req.onerror = e => reject(e.target.error);
+});
+return dbPromise;
+}
+
+async function dbGetAll() {
+const db = await openDB();
+return new Promise((resolve, reject) => {
+const tx = db.transaction('items', 'readonly');
+const req = tx.objectStore('items').getAll();
+req.onsuccess = () => resolve(req.result);
+req.onerror = () => reject(req.error);
+});
+}
+
+async function dbPut(item) {
+const db = await openDB();
+return new Promise((resolve, reject) => {
+const tx = db.transaction('items', 'readwrite');
+tx.objectStore('items').put(item);
+tx.oncomplete = () => resolve();
+tx.onerror = () => reject(tx.error);
+});
+}
+
+async function dbDelete(id) {
+const db = await openDB();
+return new Promise((resolve, reject) => {
+const tx = db.transaction('items', 'readwrite');
+tx.objectStore('items').delete(id);
+tx.oncomplete = () => resolve();
+tx.onerror = () => reject(tx.error);
+});
+}
+/* ─────────────────────────────
+添付ファイルメタ
+───────────────────────────── */
+async function dbGetAllAttachmentMeta() {
+const db = await openDB();
+return new Promise((resolve, reject) => {
+const tx = db.transaction('attachments', 'readonly');
+const req = tx.objectStore('attachments').getAll();
+req.onsuccess = () => resolve(req.result);
+req.onerror = () => reject(req.error);
+});
+}
+
+async function dbGetAttachments(itemId) {
+const db = await openDB();
+return new Promise((resolve, reject) => {
+const tx = db.transaction('attachments', 'readonly');
+const idx = tx.objectStore('attachments').index('itemId');
+const req = idx.getAll(itemId);
+req.onsuccess = () => resolve(req.result);
+req.onerror = () => reject(req.error);
+});
+}
+
+async function dbPutAttachment(att) {
+const db = await openDB();
+return new Promise((resolve, reject) => {
+const tx = db.transaction('attachments', 'readwrite');
+tx.objectStore('attachments').put(att);
+tx.oncomplete = () => resolve();
+tx.onerror = () => reject(tx.error);
+});
+}
+
+async function dbDeleteAttachment(attId) {
+const db = await openDB();
+return new Promise((resolve, reject) => {
+const tx = db.transaction('attachments', 'readwrite');
+tx.objectStore('attachments').delete(attId);
+tx.oncomplete = () => resolve();
+tx.onerror = () => reject(tx.error);
+});
+}
+
+async function dbDeleteAttachmentsByItemId(itemId) {
+const atts = await dbGetAttachments(itemId);
+for (const a of atts) await dbDeleteAttachment(a.id);
+}
+
+/* ─────────────────────────────
+暗号化 / PIN
+───────────────────────────── */
+const PIN_META_KEY = 'qr_pin_meta';
+let sessionKey = null;
+let decryptedCache = new Map();
+let pinMode = null;
+let pinModalResolve = null;
+
+function openPinModal(mode) {
+pinMode = mode;
+const in1 = document.getElementById('pinInput1');
+const in2 = document.getElementById('pinInput2');
+const err = document.getElementById('pinError');
+if (in1) in1.value = '';
+if (in2) in2.value = '';
+if (err) { err.textContent = ''; err.style.display = 'none'; }
+document.getElementById('pinOverlay').classList.add('open');
+document.getElementById('pinModal').classList.add('open');
+if (in1) in1.focus();
+}
+
+function closePinModal(success) {
+document.getElementById('pinOverlay').classList.remove('open');
+document.getElementById('pinModal').classList.remove('open');
+if (pinModalResolve) {
+const resolve = pinModalResolve;
+pinModalResolve = null;
+resolve(success);
+}
+}
+
+function ensureUnlocked() {
+return new Promise(resolve => {
+pinModalResolve = resolve;
+openPinModal(hasPinSetup() ? 'unlock' : 'setup');
+});
+}
+
+function bytesToBase64(bytes) {
+let s = '';
+bytes.forEach(x => s += String.fromCharCode(x));
+return btoa(s);
+}
+function base64ToBytes(b64) {
+const bin = atob(b64);
+const bytes = new Uint8Array(bin.length);
+for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+return bytes;
+}
+
+function getPinMeta() {
+try { return JSON.parse(localStorage.getItem(PIN_META_KEY)); }
+catch (_) { return null; }
+}
+function setPinMeta(m) {
+localStorage.setItem(PIN_META_KEY, JSON.stringify(m));
+}
+function hasPinSetup() {
+return !!getPinMeta();
+}
+
+async function deriveKeyFromPin(pin, saltB64, iterations) {
+// 旧データ（iterations未保存）は150000として扱う
+return CryptoCore.KDF_HANDLERS.pin.deriveKey(pin, {
+salt: saltB64,
+iterations: iterations || 150000
+});
+}
+
+async function setupPin(pin) {
+const salt = crypto.getRandomValues(new Uint8Array(16));
+const saltB64 = bytesToBase64(salt);
+const iterations = CryptoCore.DEFAULT_ITERATIONS; // 新規は20万回（crypto-vaultに合わせる）
+const key = await deriveKeyFromPin(pin, saltB64, iterations);
+sessionKey = key;
+setPinMeta({ salt: saltB64, iterations });
+}
+
+async function tryUnlockWithPin(pin) {
+const meta = getPinMeta();
+if (!meta) return false;
+try {
+const key = await deriveKeyFromPin(pin, meta.salt, meta.iterations);
+sessionKey = key;
+return true;
+} catch (_) {
+return false;
+}
+}
+
+function lockSession() {
+sessionKey = null;
+decryptedCache.clear();
+updateLockButton();
+renderAll();
+}
+
+function updateLockButton() {
+const btn = document.getElementById('lockToggleBtn');
+if (sessionKey) {
+btn.textContent = '🔓';
+btn.title = 'タップでロック';
+} else {
+btn.textContent = '🔒';
+btn.title = 'タップでロック解除';
+}
+}
+
+/* ─────────────────────────────
+暗号化された項目の復号
+───────────────────────────── */
+async function decryptOneField(enc) {
+// 新形式（envelope: iv/ciphertextがbase64文字列）と
+// 旧形式（iv/dataが生バイト、ivを使い回していたデータ）の両方に対応
+const isEnvelope = typeof enc.iv === 'string';
+const iv = isEnvelope ? base64ToBytes(enc.iv) : enc.iv;
+const data = isEnvelope ? base64ToBytes(enc.ciphertext) : enc.data;
+const buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, sessionKey, data);
+return new TextDecoder().decode(buf);
+}
+
+async function decryptItemContent(item) {
+if (!sessionKey) return null;
+try {
+const body = await decryptOneField(item.encBody);
+const fieldsJson = await decryptOneField(item.encFields);
+const fields = JSON.parse(fieldsJson);
+
+const out = { body, fields };
+decryptedCache.set(item.id, out);
+return out;
+} catch (_) {
+return null;
+}
+}
+
+async function refreshDecryptedCache() {
+decryptedCache.clear();
+for (const item of allItems) {
+if (item.sensitive) await decryptItemContent(item);
+}
+}
+
+/* ─────────────────────────────
+暗号化して保存
+───────────────────────────── */
+async function encryptField(plaintext) {
+const meta = getPinMeta() || {};
+const iv = crypto.getRandomValues(new Uint8Array(12));
+const buf = new TextEncoder().encode(plaintext);
+const cipherBuf = await crypto.subtle.encrypt(
+{ name: 'AES-GCM', iv },
+sessionKey,
+buf
+);
+return {
+v: 1,
+keySource: 'pin',
+alg: 'AES-GCM',
+kdf: 'PBKDF2',
+iterations: meta.iterations || 150000,
+salt: meta.salt,
+iv: bytesToBase64(iv),
+ciphertext: bytesToBase64(new Uint8Array(cipherBuf))
+};
+}
+
+async function encryptToItemFields(body, fields) {
+const encBody = await encryptField(body);
+const encFields = await encryptField(JSON.stringify(fields));
+return { encBody, encFields };
+}
+
+/* ─────────────────────────────
+検索
+───────────────────────────── */
+function escapeHtml(str) {
+return (str || '')
+.replace(/&/g, '&amp;')
+.replace(/</g, '&lt;')
+.replace(/>/g, '&gt;')
+.replace(/"/g, '&quot;')
+.replace(/'/g, '&#39;');
+}
+
+function bigrams(str) {
+const s = (str || '').toLowerCase().replace(/\s+/g, '');
+const r = new Set();
+for (let i = 0; i < s.length - 1; i++) r.add(s.slice(i, i + 2));
+if (s.length === 1) r.add(s);
+return r;
+}
+
+function buildSearchText(item) {
+const cached = decryptedCache.get(item.id);
+const body = cached ? cached.body : (item.body || '');
+const fieldsText = (cached ? cached.fields : (item.fields || []))
+.map(f => `${f.key} ${f.value}`)
+.join(' ');
+return [
+item.title || '',
+body,
+(item.tags || []).join(' '),
+fieldsText,
+item.url || ''
+].join(' ').toLowerCase();
+}
+
+function searchItems(items, query) {
+if (!query.trim()) return items;
+const q = query.trim().toLowerCase();
+const qBi = bigrams(q);
+
+return items.filter(item => {
+const text = buildSearchText(item);
+if (text.includes(q)) return true;
+
+if (q.length >= 2) {
+const tBi = bigrams(text);
+let m = 0;
+for (const b of qBi) if (tBi.has(b)) m++;
+return m / qBi.size >= 0.5;
+}
+return false;
+}).sort((a, b) => {
+const aT = (a.title || '').toLowerCase().includes(q) ? 1 : 0;
+const bT = (b.title || '').toLowerCase().includes(q) ? 1 : 0;
+if (bT !== aT) return bT - aT;
+return (b.updatedAt || 0) - (a.updatedAt || 0);
+});
+}
+
+function highlightText(text, query) {
+if (!query.trim()) return escapeHtml(text);
+const q = escapeHtml(query.trim());
+const escaped = escapeHtml(text);
+const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+return escaped.replace(re, m => `<mark>${m}</mark>`);
+}
+
+function initThemeMode() {
+if (!themeTag) {
+document.getElementById('themeBanner').style.display = 'none';
+return;
+}
+filterTag = themeTag;
+const emoji = getTagEmoji(themeTag);
+document.getElementById('themeBannerIcon').textContent = emoji;
+document.getElementById('themeBannerLabel').textContent = `#${themeTag}`;
+document.getElementById('themeBannerSub').textContent = 'テーマモードで起動中';
+document.getElementById('themeBanner').style.display = 'flex';
+document.title = `${emoji} ${themeTag} — クイック参照`;
+document.getElementById('searchInput').placeholder = `#${themeTag} 内を検索`;
+}
+/* ─────────────────────────────
+タグフィルタ / カード描画
+───────────────────────────── */
+let allItems = [];
+let attachmentMeta = [];
+let filterTag = null;
+let searchQuery = '';
+let linkFilterActive = false;
+const themeTag = new URLSearchParams(location.search).get('tag') || '';
+let voiceRec = null;
+let voiceIsRec = false;
+let voiceFullText = '';
+
+function haptic() {
+if (navigator.vibrate) navigator.vibrate(8);
+}
+
+async function reload() {
+allItems = await dbGetAll();
+attachmentMeta = await dbGetAllAttachmentMeta();
+renderTagFilter();
+renderAll();
+}
+
+function showToast(message) {
+const toast = document.getElementById('toast');
+if (!toast) return;
+toast.textContent = message;
+toast.classList.add('show');
+clearTimeout(showToast.timer);
+showToast.timer = setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+function getAllTagsSorted() {
+const s = new Set();
+allItems.forEach(i => (i.tags || []).forEach(t => s.add(t)));
+return [...s].sort();
+}
+
+function renderTagFilter() {
+const row = document.getElementById('tagFilterRow');
+const allTags = getAllTagsSorted();
+const chips = ['__all__', ...allTags].map(tag => {
+const label = tag === '__all__' ? 'すべて' : tag;
+const active = filterTag === tag ? 'active' : '';
+return `<button class="filter-chip ${active}" data-tag="${escapeHtml(tag)}">${escapeHtml(label)}</button>`;
+});
+
+row.innerHTML =
+chips.join('') +
+`<button class="filter-chip${linkFilterActive ? ' active' : ''}" id="linkFilterBtn">🔗 リンク集</button>`;
+
+row.querySelectorAll('.filter-chip[data-tag]').forEach(btn => {
+btn.addEventListener('click', () => {
+filterTag = btn.dataset.tag;
+renderTagFilter();
+renderAll();
+});
+});
+
+document.getElementById('linkFilterBtn').addEventListener('click', () => {
+linkFilterActive = !linkFilterActive;
+renderTagFilter();
+renderAll();
+});
+}
+
+function renderAll() {
+const list = document.getElementById('cardList');
+const empty = document.getElementById('emptyState');
+
+let items = [...allItems];
+
+if (filterTag && filterTag !== '__all__') {
+items = items.filter(i => (i.tags || []).includes(filterTag));
+}
+
+if (linkFilterActive) {
+const links = getLinks();
+items = items.filter(i => (links[i.id] || []).length > 0);
+}
+
+items = searchItems(items, searchQuery);
+
+if (!items.length) {
+list.innerHTML = '';
+empty.style.display = 'block';
+document.getElementById('countLabel').textContent = '0件';
+return;
+}
+
+empty.style.display = 'none';
+document.getElementById('countLabel').textContent = `${items.length}件`;
+
+list.innerHTML = items
+.map(item => {
+const cached = decryptedCache.get(item.id);
+const body = cached ? cached.body : (item.body || '');
+const snippet = body.replace(/<[^>]+>/g, '').slice(0, 80);
+const tagsHtml = (item.tags || [])
+.map(t => `<span class="chip">#${escapeHtml(t)}</span>`)
+.join('');
+
+return `
+<div class="card" data-id="${item.id}">
+<div class="card-title">${highlightText(item.title || '(無題)', searchQuery)}</div>
+<div class="card-snippet">${highlightText(snippet, searchQuery)}</div>
+<div class="chips">${tagsHtml}</div>
+<div class="card-meta">
+<span>${item.url ? '🔗 URLあり' : ''}</span>
+<span>${item.sensitive ? '🔒 保護' : ''}</span>
+</div>
+</div>`;
+})
+.join('');
+
+list.querySelectorAll('.card').forEach(el => {
+el.addEventListener('click', () => openEdit(el.dataset.id));
+});
+}
+
+/* ─────────────────────────────
+編集シート：新規
+───────────────────────────── */
+let editingId = null;
+let draftTags = [];
+let draftFields = [];
+let draftSensitive = false;
+let draftImages = [];
+let draftAudios = [];
+let draftVideos = [];
+let pendingDeleteAttIds = [];
+let objURLs = [];
+
+function revokeAllObjURLs() {
+objURLs.forEach(u => URL.revokeObjectURL(u));
+objURLs = [];
+}
+
+function openNew() {
+editingId = null;
+draftTags = [];
+draftFields = [];
+draftSensitive = false;
+draftImages = [];
+draftAudios = [];
+draftVideos = [];
+pendingDeleteAttIds = [];
+revokeAllObjURLs();
+
+document.getElementById('sheetTitle').textContent = '新規追加';
+document.getElementById('fTitle').value = '';
+document.getElementById('fBody').innerHTML = '';
+document.getElementById('tagInput').value = '';
+document.getElementById('inputUrl').value = '';
+document.getElementById('sensitiveToggle').checked = false;
+document.getElementById('dangerZone').style.display = 'none';
+document.getElementById('fieldRows').innerHTML = '';
+document.getElementById('imgThumbs').innerHTML = '';
+document.getElementById('audioList').innerHTML = '';
+document.getElementById('videoList').innerHTML = '';
+document.getElementById('relatedSection').innerHTML = '';
+
+renderTagChips();
+renderTagSuggestions();
+openSheet();
+}
+
+/* ─────────────────────────────
+編集シート：既存項目を開く
+───────────────────────────── */
+async function openEdit(id) {
+const item = allItems.find(i => i.id === id);
+if (!item) return;
+
+let plainBody = '';
+let plainFields = [];
+
+if (item.sensitive) {
+const ok = await ensureUnlocked();
+if (!ok) return;
+
+const cached = decryptedCache.get(item.id) || (await decryptItemContent(item));
+if (cached) {
+plainBody = cached.body || '';
+plainFields = cached.fields || [];
+}
+} else {
+plainBody = item.body || '';
+plainFields = item.fields || [];
+}
+
+editingId = id;
+draftTags = [...(item.tags || [])];
+draftFields = [...plainFields];
+draftSensitive = !!item.sensitive;
+
+revokeAllObjURLs();
+draftImages = [];
+draftAudios = [];
+draftVideos = [];
+pendingDeleteAttIds = [];
+stopRecordingIfActive();
+
+document.getElementById('sheetTitle').textContent = '編集';
+document.getElementById('fTitle').value = item.title || '';
+document.getElementById('fBody').innerHTML = plainBody;
+document.getElementById('tagInput').value = '';
+document.getElementById('inputUrl').value = item.url || '';
+document.getElementById('sensitiveToggle').checked = draftSensitive;
+document.getElementById('dangerZone').style.display = '';
+
+renderTagChips();
+renderTagSuggestions();
+renderFieldRows();
+
+document.getElementById('imgThumbs').innerHTML = '';
+document.getElementById('audioList').innerHTML = '';
+document.getElementById('videoList').innerHTML = '';
+
+await loadExistingImages(id);
+await loadExistingAudios(id);
+await loadExistingVideos(id);
+
+openSheet();
+
+// flow-mind 連携ボタン
+document.getElementById('relatedSection').insertAdjacentElement(
+'afterend',
+(() => {
+const wrap = document.createElement('div');
+wrap.style.cssText = 'margin-top:10px;';
+const btn = window.QuickRefBridge?.createSendButton(item);
+if (btn) wrap.appendChild(btn);
+return wrap;
+})()
+);
+
+setTimeout(() => renderRelatedItems(item), 80);
+}
+
+function openSheet() {
+document.getElementById('editSheet').classList.add('open');
+document.getElementById('overlay').classList.add('open');
+setTimeout(() => document.getElementById('fTitle').focus(), 300);
+}
+
+function closeSheet() {
+stopRecordingIfActive();
+revokeAllObjURLs();
+pendingDeleteAttIds = [];
+document.getElementById('editSheet').classList.remove('open');
+document.getElementById('overlay').classList.remove('open');
+}
+/* ─────────────────────────────
+タグ入力・構造化項目
+───────────────────────────── */
+function renderTagChips() {
+const el = document.getElementById('tagChips');
+el.innerHTML = draftTags
+.map(t => `<span class="chip" data-tag="${escapeHtml(t)}">#${escapeHtml(t)} <button class="chip-del">✕</button></span>`)
+.join('');
+
+el.querySelectorAll('.chip-del').forEach(btn => {
+btn.addEventListener('click', () => {
+const tag = btn.parentElement.dataset.tag;
+draftTags = draftTags.filter(x => x !== tag);
+renderTagChips();
+renderTagSuggestions();
+});
+});
+}
+
+function renderTagSuggestions() {
+const el = document.getElementById('tagSuggestions');
+const input = document.getElementById('tagInput').value.trim().toLowerCase();
+const all = getAllTagsSorted().filter(t => !draftTags.includes(t));
+
+const filtered = input
+? all.filter(t => t.toLowerCase().includes(input))
+: all.slice(0, 10);
+
+el.innerHTML = filtered
+.map(t => `<span class="chip suggestion" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</span>`)
+.join('');
+
+el.querySelectorAll('.suggestion').forEach(btn => {
+btn.addEventListener('click', () => {
+draftTags.push(btn.dataset.tag);
+document.getElementById('tagInput').value = '';
+renderTagChips();
+renderTagSuggestions();
+});
+});
+}
+
+function commitTagInput() {
+const v = document.getElementById('tagInput').value.trim();
+if (!v) return;
+if (!draftTags.includes(v)) draftTags.push(v);
+document.getElementById('tagInput').value = '';
+renderTagChips();
+renderTagSuggestions();
+}
+
+/* ─────────────────────────────
+構造化項目
+───────────────────────────── */
+function renderFieldRows() {
+const el = document.getElementById('fieldRows');
+el.innerHTML = draftFields
+.map((f, i) => `
+<div class="field-row" data-i="${i}">
+<input type="text" class="field-key" placeholder="項目名" value="${escapeHtml(f.key)}">
+<input type="text" class="field-value" placeholder="値" value="${escapeHtml(f.value)}">
+<button class="field-del">✕</button>
+</div>
+`)
+.join('');
+
+el.querySelectorAll('.field-row').forEach(row => {
+const i = Number(row.dataset.i);
+row.querySelector('.field-key').addEventListener('input', e => {
+draftFields[i].key = e.target.value;
+});
+row.querySelector('.field-value').addEventListener('input', e => {
+draftFields[i].value = e.target.value;
+});
+row.querySelector('.field-del').addEventListener('click', () => {
+draftFields.splice(i, 1);
+renderFieldRows();
+});
+});
+}
+
+/* ─────────────────────────────
+画像添付
+───────────────────────────── */
+function renderImageThumbs() {
+const el = document.getElementById('imgThumbs');
+el.innerHTML = '';
+
+draftImages.forEach((img, i) => {
+const wrap = document.createElement('div');
+wrap.className = 'img-thumb-wrap';
+
+const thumb = document.createElement('img');
+thumb.className = 'img-thumb';
+thumb.src = img.url;
+thumb.addEventListener('click', () => openImgPreview(img.url));
+
+const del = document.createElement('button');
+del.type = 'button';
+del.className = 'img-thumb-del';
+del.textContent = '×';
+del.addEventListener('click', () => {
+if (img.isExisting && img.attId) pendingDeleteAttIds.push(img.attId);
+URL.revokeObjectURL(img.url);
+draftImages.splice(i, 1);
+renderImageThumbs();
+});
+
+wrap.appendChild(thumb);
+wrap.appendChild(del);
+el.appendChild(wrap);
+});
+}
+
+function addBlobToDraft(blob, name) {
+if (blob.size > 5 * 1024 * 1024) {
+showToast('画像サイズが大きすぎます(上限5MB)');
+return;
+}
+const url = URL.createObjectURL(blob);
+objURLs.push(url);
+draftImages.push({
+tempId: crypto.randomUUID(),
+blob,
+url,
+name: name || 'image.jpg',
+isExisting: false
+});
+renderImageThumbs();
+}
+
+async function loadExistingImages(itemId) {
+const atts = await dbGetAttachments(itemId);
+atts
+.filter(a => a.type === 'image')
+.forEach(a => {
+const url = URL.createObjectURL(a.blob);
+objURLs.push(url);
+draftImages.push({
+tempId: crypto.randomUUID(),
+blob: a.blob,
+url,
+name: a.name,
+isExisting: true,
+attId: a.id
+});
+});
+renderImageThumbs();
+}
+
+async function saveImageAttachments(itemId) {
+for (const img of draftImages) {
+if (!img.isExisting) {
+await dbPutAttachment({
+id: crypto.randomUUID(),
+itemId,
+type: 'image',
+blob: img.blob,
+mimeType: img.blob.type || 'image/jpeg',
+name: img.name,
+createdAt: Date.now()
+});
+}
+}
+}
+
+/* ─────────────────────────────
+音声添付
+───────────────────────────── */
+let mediaRecorder = null;
+let recChunks = [];
+let recSeconds = 0;
+let recTimerInterval = null;
+
+function formatTime(sec) {
+const m = String(Math.floor(sec / 60)).padStart(2, '0');
+const s = String(sec % 60).padStart(2, '0');
+return `${m}:${s}`;
+}
+
+function stopRecordingIfActive() {
+if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+if (recTimerInterval) {
+clearInterval(recTimerInterval);
+recTimerInterval = null;
+}
+document.getElementById('recStatus').classList.remove('active');
+mediaRecorder = null;
+recChunks = [];
+recSeconds = 0;
+}
+
+function addAudioToDraft(blob, name, type = 'audio', meta = {}) {
+const url = URL.createObjectURL(blob);
+objURLs.push(url);
+draftAudios.push({
+tempId: crypto.randomUUID(),
+blob,
+url,
+name,
+type,
+meta,
+isExisting: false
+});
+renderAudioList();
+}
+
+async function loadExistingAudios(itemId) {
+const atts = await dbGetAttachments(itemId);
+atts
+.filter(a => a.type === 'audio' || a.type === 'music-ref')
+.forEach(a => {
+const url = a.type === 'music-ref' ? null : URL.createObjectURL(a.blob);
+if (url) objURLs.push(url);
+draftAudios.push({
+tempId: crypto.randomUUID(),
+blob: a.blob,
+url,
+name: a.name,
+type: a.type,
+meta: a.meta || {},
+isExisting: true,
+attId: a.id
+});
+});
+renderAudioList();
+}
+
+async function saveAudioAttachments(itemId) {
+for (const aud of draftAudios) {
+if (!aud.isExisting) {
+await dbPutAttachment({
+id: crypto.randomUUID(),
+itemId,
+type: aud.type,
+blob: aud.blob,
+mimeType: aud.blob ? aud.blob.type : 'application/json',
+name: aud.name,
+meta: aud.meta,
+createdAt: Date.now()
+});
+}
+}
+}
+/* ─────────────────────────────
+音声リスト描画
+───────────────────────────── */
+function renderAudioList() {
+const el = document.getElementById('audioList');
+el.innerHTML = '';
+
+draftAudios.forEach((aud, i) => {
+const row = document.createElement('div');
+row.className = 'audio-row';
+
+const name = document.createElement('span');
+name.className = 'audio-name';
+name.textContent = aud.name;
+
+const play = document.createElement('button');
+play.className = 'audio-play-btn';
+play.textContent = '▶︎';
+play.addEventListener('click', () => {
+if (!aud.url) {
+alert('music-suite素材はJSONのため再生できません');
+return;
+}
+const audio = new Audio(aud.url);
+audio.play();
+});
+
+const del = document.createElement('button');
+del.className = 'audio-del-btn';
+del.textContent = '✕';
+del.addEventListener('click', () => {
+if (aud.isExisting && aud.attId) pendingDeleteAttIds.push(aud.attId);
+if (aud.url) URL.revokeObjectURL(aud.url);
+draftAudios.splice(i, 1);
+renderAudioList();
+});
+
+row.appendChild(name);
+row.appendChild(play);
+row.appendChild(del);
+el.appendChild(row);
+});
+}
+
+/* ─────────────────────────────
+動画添付
+───────────────────────────── */
+function addVideoToDraft(file, name) {
+if (file.size > 20 * 1024 * 1024) {
+showToast('動画サイズが大きすぎます(上限20MB)');
+return;
+}
+const url = URL.createObjectURL(file);
+objURLs.push(url);
+draftVideos.push({
+tempId: crypto.randomUUID(),
+blob: file,
+url,
+name: name || 'video.mp4',
+isExisting: false
+});
+renderVideoList();
+}
+
+async function loadExistingVideos(itemId) {
+const atts = await dbGetAttachments(itemId);
+atts
+.filter(a => a.type === 'video')
+.forEach(a => {
+const url = URL.createObjectURL(a.blob);
+objURLs.push(url);
+draftVideos.push({
+tempId: crypto.randomUUID(),
+blob: a.blob,
+url,
+name: a.name,
+isExisting: true,
+attId: a.id
+});
+});
+renderVideoList();
+}
+
+function renderVideoList() {
+const el = document.getElementById('videoList');
+el.innerHTML = '';
+
+draftVideos.forEach((vid, i) => {
+const row = document.createElement('div');
+row.className = 'video-row';
+
+const name = document.createElement('span');
+name.className = 'video-name';
+name.textContent = vid.name;
+
+const play = document.createElement('button');
+play.className = 'video-play-btn';
+play.textContent = '▶︎';
+play.addEventListener('click', () => {
+const video = document.createElement('video');
+video.src = vid.url;
+video.controls = true;
+video.style.width = '100%';
+const overlay = document.createElement('div');
+overlay.className = 'video-preview-overlay';
+overlay.appendChild(video);
+overlay.addEventListener('click', () => overlay.remove());
+document.body.appendChild(overlay);
+video.play();
+});
+
+const del = document.createElement('button');
+del.className = 'video-del-btn';
+del.textContent = '✕';
+del.addEventListener('click', () => {
+if (vid.isExisting && vid.attId) pendingDeleteAttIds.push(vid.attId);
+URL.revokeObjectURL(vid.url);
+draftVideos.splice(i, 1);
+renderVideoList();
+});
+
+row.appendChild(name);
+row.appendChild(play);
+row.appendChild(del);
+el.appendChild(row);
+});
+}
+
+async function saveVideoAttachments(itemId) {
+for (const vid of draftVideos) {
+if (!vid.isExisting) {
+await dbPutAttachment({
+id: crypto.randomUUID(),
+itemId,
+type: 'video',
+blob: vid.blob,
+mimeType: vid.blob.type || 'video/mp4',
+name: vid.name,
+createdAt: Date.now()
+});
+}
+}
+}
+
+/* ─────────────────────────────
+保存処理
+───────────────────────────── */
+async function saveItem() {
+const title = document.getElementById('fTitle').value.trim();
+if (!title) {
+showToast('タイトルを入力してください');
+return;
+}
+
+const url = document.getElementById('inputUrl').value.trim();
+const body = document.getElementById('fBody').innerHTML;
+const fields = draftFields.filter(f => f.key.trim() || f.value.trim());
+const now = Date.now();
+
+let item = {
+id: editingId || crypto.randomUUID(),
+title,
+tags: [...draftTags],
+url,
+sensitive: draftSensitive,
+createdAt: editingId ? allItems.find(i => i.id === editingId).createdAt : now,
+updatedAt: now
+};
+
+if (draftSensitive) {
+if (!sessionKey) {
+const ok = await ensureUnlocked();
+if (!ok) return;
+}
+const enc = await encryptToItemFields(body, fields);
+item.encBody = enc.encBody;
+item.encFields = enc.encFields;
+item.body = '';
+item.fields = [];
+} else {
+item.body = body;
+item.fields = fields;
+item.encBody = null;
+item.encFields = null;
+}
+
+await dbPut(item);
+window.QuickRefBridge?.onItemSaved(item);
+
+for (const attId of pendingDeleteAttIds) await dbDeleteAttachment(attId);
+pendingDeleteAttIds = [];
+
+await saveImageAttachments(item.id);
+await saveAudioAttachments(item.id);
+await saveVideoAttachments(item.id);
+
+await reload();
+closeSheet();
+showToast('保存しました');
+void syncCloudNow(false);
+}
+
+/* ─────────────────────────────
+削除処理
+───────────────────────────── */
+async function deleteItem() {
+if (!editingId) return;
+if (!confirm('この項目を削除しますか？')) return;
+
+await dbDelete(editingId);
+await dbDeleteAttachmentsByItemId(editingId);
+
+await reload();
+closeSheet();
+showToast('削除しました');
+}
+
+/* ─────────────────────────────
+画像プレビュー
+───────────────────────────── */
+function openImgPreview(url) {
+const overlay = document.getElementById('imgPreviewOverlay');
+const img = document.getElementById('imgPreviewImg');
+img.src = url;
+overlay.classList.add('open');
+}
+/* ─────────────────────────────
+画像プレビュークローズ
+───────────────────────────── */
+document.getElementById('imgPreviewClose').addEventListener('click', () => {
+document.getElementById('imgPreviewOverlay').classList.remove('open');
+document.getElementById('imgPreviewImg').src = '';
+});
+document.getElementById('imgPreviewOverlay').addEventListener('click', e => {
+if (e.target === document.getElementById('imgPreviewOverlay')) {
+document.getElementById('imgPreviewOverlay').classList.remove('open');
+document.getElementById('imgPreviewImg').src = '';
+}
+});
+
+/* ─────────────────────────────
+共有テキスト（Share Target）
+───────────────────────────── */
+let sharedText = null;
+
+function checkShareTarget() {
+if ('launchQueue' in window && 'files' in LaunchParams.prototype) {
+launchQueue.setConsumer(async params => {
+if (!params.files.length) return;
+const file = params.files[0];
+const text = await file.text();
+sharedText = text.trim();
+if (sharedText) {
+document.getElementById('shareReceivedText').textContent =
+sharedText.slice(0, 120);
+document.getElementById('shareReceivedBanner').classList.add('show');
+}
+});
+}
+}
+
+function useSharedText() {
+if (!sharedText) return;
+openNew();
+document.getElementById('fBody').innerText = sharedText;
+sharedText = null;
+document.getElementById('shareReceivedBanner').classList.remove('show');
+}
+
+function tryImportFromIllustStudio() {
+try {
+const raw = localStorage.getItem('is_transfer');
+if (!raw) {
+alert('illust-studioからの転送データが見つかりません。');
+return;
+}
+const data = JSON.parse(raw);
+const src = data.image || data.dataUrl || data.src || null;
+if (!src) {
+alert('画像データが取得できませんでした。');
+return;
+}
+fetch(src).then(r => r.blob()).then(blob => {
+addBlobToDraft(blob, data.title ? `${data.title}.png` : 'illust-studio.png');
+localStorage.removeItem('is_transfer');
+});
+} catch (e) {
+alert('is_transfer読み込み失敗: ' + e.message);
+}
+}
+
+async function importItemsFromPayload(items, source) {
+let count = 0;
+for (const item of items) {
+if (!item.id) item.id = crypto.randomUUID();
+item.source = source;
+await dbPut(item);
+count++;
+}
+await reload();
+showToast(`${source}から${count}件を受信しました`);
+}
+
+function checkImportHash() {
+if (!location.hash.startsWith('#import=')) return;
+try {
+const payload = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(8)))));
+const items = Array.isArray(payload.items) ? payload.items : payload;
+if (Array.isArray(items)) importItemsFromPayload(items, payload.source || 'unknown');
+} catch (e) {
+console.warn(e);
+} finally {
+history.replaceState(null, '', location.pathname + location.search);
+}
+}
+
+function checkIncomingTransfer() {
+try {
+const raw = localStorage.getItem(LS.TRANSFER);
+if (!raw) return;
+const payload = JSON.parse(raw);
+if (payload.source === 'quick-ref' || !Array.isArray(payload.items)) return;
+if (confirm(`${payload.source || '他アプリ'}から${payload.items.length}件のデータがあります。インポートしますか？`)) {
+importItemsFromPayload(payload.items, payload.source || 'transfer');
+localStorage.removeItem(LS.TRANSFER);
+}
+} catch (_) {}
+}
+
+/* ─────────────────────────────
+iCloud 保存 / 自動同期
+───────────────────────────── */
+const ICLOUD_AUTO_KEY = 'qr_icloud_auto';
+
+async function doExport() {
+const payload = {
+exportedAt: Date.now(),
+items: allItems,
+attachments: attachmentMeta
+};
+const blob = new Blob([JSON.stringify(payload)], {
+type: 'application/json'
+});
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+const timestamp = new Date();
+const pad = value => String(value).padStart(2, '0');
+const date = `${timestamp.getFullYear()}-${pad(timestamp.getMonth() + 1)}-${pad(timestamp.getDate())}`;
+const time = `${pad(timestamp.getHours())}${pad(timestamp.getMinutes())}`;
+const filename = `quick-ref_${date}_${time}_${allItems.length}件.json`;
+a.href = url;
+a.download = filename;
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+URL.revokeObjectURL(url);
+
+document.getElementById('icloudGuideFilename').textContent = filename;
+document.getElementById('icloudGuide').classList.add('open');
+}
+
+async function doImport(file) {
+try {
+const text = await file.text();
+const json = JSON.parse(text);
+
+const items = json.items || [];
+const atts = json.attachments || [];
+
+let count = 0;
+for (const item of items) {
+if (!item.id) item.id = crypto.randomUUID();
+await dbPut(item);
+count++;
+}
+
+for (const a of atts) {
+if (!a.id) a.id = crypto.randomUUID();
+await dbPutAttachment(a);
+}
+
+await reload();
+return { ok: true, msg: `${count}件をインポートしました` };
+} catch (e) {
+return { ok: false, msg: 'インポートに失敗しました' };
+}
+}
+
+async function saveToiCloud() {
+try {
+await doExport();
+showToast('iCloud Drive に保存しました');
+} catch (_) {
+showToast('保存に失敗しました');
+}
+}
+
+function setupPeriodicSync() {
+localStorage.setItem(ICLOUD_AUTO_KEY, '1');
+updateAutoToggleBtn();
+showToast('自動保存を有効化しました');
+}
+
+function cancelPeriodicSync() {
+localStorage.removeItem(ICLOUD_AUTO_KEY);
+updateAutoToggleBtn();
+showToast('自動保存を停止しました');
+}
+
+function updateiCloudStatus() {
+const desc = document.getElementById('icloudMenuDesc');
+if (localStorage.getItem(ICLOUD_AUTO_KEY)) {
+desc.textContent = '自動保存 ON（定期的にバックアップ）';
+} else {
+desc.textContent = 'ファイルアプリ経由で自動バックアップ';
+}
+}
+
+function updateAutoToggleBtn() {
+const btn = document.getElementById('icloudAutoToggleBtn');
+if (!btn) return;
+const on = !!localStorage.getItem(ICLOUD_AUTO_KEY);
+btn.textContent = on ? '✅ 自動保存ON' : '⏰ 自動保存設定';
+btn.style.background = on ? 'rgba(52,199,89,0.12)' : '';
+btn.style.color = on ? '#1A8C3A' : '';
+btn.style.borderColor = on ? 'rgba(52,199,89,0.3)' : '';
+}
+
+/* ─────────────────────────────
+Siri Shortcuts ガイド
+───────────────────────────── */
+function showSiriShortcutGuide() {
+const base = location.origin + location.pathname;
+const msg = [
+'【Siri Shortcuts 設定手順】',
+'',
+'① ショートカットアプリを開く',
+'② 右上（＋）→「アクションを追加」',
+'③「URLを開く」を追加',
+'④ 以下のURLを入力：',
+'',
+' ⚡ 即保存(推奨): ' +
+base +
+'?shortcut=quicksave&text=[ここに「テキストを入力」変数を挿入]',
+' 音声追加: ' + base + '?shortcut=voice',
+' カメラ追加: ' + base + '?shortcut=camera',
+' 新規追加: ' + base + '?shortcut=new',
+' レビュー: ' + base + '?shortcut=review',
+...
+
+[メッセージの一部が表示されています]  メッセージ全体を表示

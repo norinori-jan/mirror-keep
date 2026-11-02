@@ -1,0 +1,522 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14110c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="声">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>声 ― voice-pad</title>
+<style>
+:root{--bg:#f6f3ec;--card:#fff;--ink:#1d1a14;--sub:#7a7468;--line:#e3ddd0;--gold:#b8860b;--gold-bg:#fbf1d3;--ok:#1f8f55;--ng:#c0392b;--r:14px}
+@media (prefers-color-scheme:dark){:root{--bg:#14110c;--card:#1e1a13;--ink:#f1ece0;--sub:#a39b88;--line:#332f25;--gold:#e8b84a;--gold-bg:#2d2512;--ok:#4cc38a;--ng:#ff7a6b}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;-webkit-text-size-adjust:100%}
+body{padding:calc(env(safe-area-inset-top) + 10px) 16px calc(env(safe-area-inset-bottom) + 40px);max-width:640px;margin:0 auto;overflow-x:hidden}
+header{display:flex;align-items:center;gap:10px}
+h1{font-size:20px;margin:0;flex:1}
+h1 span{color:var(--gold)}
+button{font:inherit;color:inherit;cursor:pointer}
+.icon{background:none;border:1px solid var(--line);border-radius:10px;width:40px;height:40px;font-size:18px}
+.note{font-size:12px;color:var(--sub);margin:2px 0 8px}
+.stage{display:flex;flex-direction:column;align-items:center;margin:18px 0 8px}
+#mic{width:104px;height:104px;border-radius:50%;border:3px solid var(--gold);background:var(--gold-bg);font-size:40px;line-height:1;display:flex;align-items:center;justify-content:center;transition:transform .1s}
+#mic:active{transform:scale(.96)}
+#mic.rec{background:var(--ng);border-color:var(--ng);color:#fff;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 14px rgba(192,57,43,.18)}}
+#mic[disabled]{opacity:.5}
+#timer{font-size:22px;font-variant-numeric:tabular-nums;margin-top:10px;min-height:34px}
+#meter{width:min(260px,70%);height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin-top:4px}
+#meter i{display:block;height:100%;width:0;background:var(--gold);transition:width .08s}
+#hint{font-size:13px;color:var(--sub);margin-top:8px;text-align:center;min-height:20px}
+.banner{font-size:14px;margin:10px 0;padding:10px 12px;border-radius:10px;background:var(--gold-bg);display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.banner.err{background:rgba(192,57,43,.12);color:var(--ng)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin:12px 0}
+.meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--sub);flex-wrap:wrap}
+.chip{border:1px solid var(--line);border-radius:99px;padding:1px 10px;font-size:11px}
+.chip.pending{border-color:var(--gold);color:var(--gold)}
+.chip.done{border-color:var(--ok);color:var(--ok)}
+.chip.sent{background:var(--ok);color:#fff;border-color:var(--ok)}
+.err-line{font-size:13px;color:var(--ng);margin:6px 0;word-break:break-word}
+input[type=text],input[type=password],textarea,select{width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:6px}
+textarea{min-height:110px;resize:vertical}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.btn{min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);font-weight:600;font-size:14px}
+.btn.main{background:var(--gold);border-color:var(--gold);color:#fff}
+@media (prefers-color-scheme:dark){.btn.main{color:#14110c}}
+.btn.ng{color:var(--ng);border-color:var(--ng)}
+.btn[disabled]{opacity:.45;cursor:default}
+.prev{margin-top:10px;border:1px dashed var(--gold);border-radius:12px;padding:8px 12px}
+.prev b{font-size:12px;color:var(--gold)}
+.prev .t{white-space:pre-wrap;word-break:break-word;margin-top:4px}
+label{display:block;font-size:12px;color:var(--sub);margin:10px 0 0}
+details.cfg{margin-top:18px;border-top:1px solid var(--line);padding-top:10px}
+details.cfg summary{font-size:13px;color:var(--sub);cursor:pointer}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes s{to{transform:rotate(360deg)}}
+.empty{color:var(--sub);text-align:center;margin:26px 0;font-size:14px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1><span>🎙</span> 声</h1>
+  <button class="icon" id="cfgBtn" aria-label="設定">⚙</button>
+</header>
+<div class="note">話すと文字になり、整えて、quick-ref のメモに預けられます。</div>
+
+<div class="stage">
+  <button id="mic" aria-label="録音の開始と停止">🎙</button>
+  <div id="timer" aria-live="polite"></div>
+  <div id="meter" hidden><i></i></div>
+  <div id="hint">タップして話す。もう一度タップで終わり。</div>
+</div>
+
+<div id="banner" class="banner" hidden></div>
+<div id="list"></div>
+
+<details class="cfg" id="cfg">
+  <summary>接続の設定（quick-ref / flow-mind と共通）</summary>
+  <label for="ep">sync-worker のエンドポイント</label>
+  <input type="text" id="ep" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="https://sync-worker.○○.workers.dev">
+  <label for="tk">同期トークン</label>
+  <input type="password" id="tk" autocapitalize="off" autocomplete="off" spellcheck="false">
+  <label for="mode">文字起こしの仕方</label>
+  <select id="mode"><option value="clean">整える（言いよどみを除く）</option><option value="verbatim">聞こえたまま</option></select>
+  <label for="prov">整えるAI</label>
+  <select id="prov"><option value="gemini">Gemini</option><option value="claude">Claude</option></select>
+  <div class="row"><button class="btn main" id="saveCfg">保存</button><button class="btn" id="checkBtn">接続を確認</button></div>
+  <div class="note" id="checkMsg"></div>
+  <div class="note">録音は、文字になるまで・預けるまで、この端末に残ります。トークンは、この端末の中だけに保存されます。</div>
+</details>
+
+<details class="cfg" id="voiceBackup">
+  <summary>端末データのバックアップ／復元</summary>
+  <div class="note">録音・文字起こし・メモをJSONファイルに保存します。復元は既存データに追加／同じIDは上書きします。</div>
+  <div class="row">
+    <button class="btn" id="backupExport">JSONを書き出す</button>
+    <button class="btn" id="backupImport">JSONから復元</button>
+    <input id="backupFile" type="file" accept=".json,application/json" hidden>
+  </div>
+  <div class="note" id="backupStatus" aria-live="polite"></div>
+</details>
+
+<script>
+/*PURE_START*/
+const MAX_MS = 290000;          // 1回の録音は 4分50秒まで（16kHz・モノラルのWAVで約9MB。Workerの上限に収まる）
+const AI_ACTIONS = [
+  { k: 'clean',  label: '読みやすく', kind: 'text', p: '次の文章を、内容を変えずに読みやすい日本語に整えてください。言っていないことは足さず、不要な繰り返しだけ減らし、段落に分けます。整えた本文だけを返してください。' },
+  { k: 'points', label: '要点3行',   kind: 'text', p: '次の文章の要点を、短い3行にまとめてください。言っていないことは足しません。3行だけを返してください。' },
+  { k: 'todo',   label: 'やること',   kind: 'text', p: '次の文章から、「やること」だけを箇条書きで抜き出してください。なければ「やることは見当たりません」とだけ返してください。' },
+  { k: 'title',  label: '題をつける', kind: 'title', p: '次の文章に、20文字以内の短い題を1つだけ付けてください。題だけを返してください。' },
+  { k: 'table',  label: '表にする',   kind: 'table', p: '内容を表にして。Markdown の表だけを出力。1行目は見出し。数字は単位を付けず数字だけにする。前置きや説明は付けない。' },
+  { k: 'flow',   label: 'フローにする', kind: 'flow', p: '内容を流れ図にして。1行に「A -> B」の形で、矢印の線だけを出力する。最初は「開始」、最後は「終了」にする。分かれ道（判断）は「？」で終わる言葉にして、「判断？ -(はい)-> 次」「判断？ -(いいえ)-> 次」の形で書く。前置きや説明は付けない。' }
+];
+const KIND_NAME = { memo: 'メモ', table: '表', flow: 'フロー' };
+// AIが付けがちな ``` の囲みや前置きを外して、表・フローの本文だけにする
+function cleanBlock(kind, t) {
+  let s = String(t || '').replace(/\r\n?/g, '\n').trim();
+  const m = s.match(/```[a-zA-Z]*\n([\s\S]*?)```/); if (m) s = m[1].trim();
+  s = s.replace(/^```[a-zA-Z]*\n?|\n?```$/g, '').trim();
+  if (kind === 'table') { const L = s.split('\n'); const i = L.findIndex(x => x.trim().startsWith('|')); if (i > 0) s = L.slice(i).join('\n').trim(); }
+  if (kind === 'flow') s = s.split('\n').filter(x => x.includes('->')).join('\n').trim();
+  return s;
+}
+function fmtDur(ms) { const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+function bufToB64(buf) {
+  const u = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+// 16bit PCM・モノラルのWAVにする（どの端末の録音形式でも、Geminiが読める形にそろえる）
+function wavFromFloat32(f32, rate) {
+  const n = f32.length, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  w(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) { const x = Math.max(-1, Math.min(1, f32[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+  return buf;
+}
+function titleFromText(t) { return String(t || '').trim().split('\n')[0].slice(0, 40); }
+function buildEditPrompt(text, instruction) {
+  return '次の「本文」を、「指示」どおりに直してください。指示にないことは変えず、言っていないことは足しません。直した本文だけを返してください（前置きや説明は付けません）。\n\n【指示】\n' + instruction + '\n\n【本文】\n' + text;
+}
+function composeMemo(title, body) {
+  const t = String(title || '').trim().replace(/\n+/g, ' '), b = String(body || '').trim();
+  return t && b.split('\n')[0].trim() !== t ? t + '\n' + b : b;
+}
+function errText(status, serverMsg, where) {
+  if (status === 401) return '同期トークンが違います（設定を確認してください）';
+  if (status === 413) return '長すぎます。もう少し短く区切ってください';
+  if (status === 429) return String(serverMsg || '今日の上限に達しました');
+  if (status === 422) return String(serverMsg || '文字を取り出せませんでした');
+  if (status === 503) return String(serverMsg || where + 'の準備ができていません');
+  return where + 'に失敗しました (' + status + ')' + (serverMsg ? '：' + String(serverMsg).slice(0, 120) : '');
+}
+/*PURE_END*/
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const LSK = { ep: 'qr_sync_endpoint', tk: 'qr_sync_token', mode: 'vp_mode', prov: 'vp_provider' };
+const ls = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (_) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+};
+const cfg = () => ({ ep: (ls.get(LSK.ep, '') || '').trim().replace(/\/+$/, ''), tk: (ls.get(LSK.tk, '') || '').trim(), mode: ls.get(LSK.mode, 'clean'), prov: ls.get(LSK.prov, 'gemini') });
+
+/* ── 端末に残す（IndexedDB）。録音は、文字になる・預けるまで消さない ── */
+let dbp = null;
+function openDB() {
+  if (dbp) return dbp;
+  dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('voice-pad', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('rec', { keyPath: 'id' }); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  return dbp;
+}
+async function tx(mode, fn) {
+  const db = await openDB();
+  return new Promise((res, rej) => { const t = db.transaction('rec', mode); const out = fn(t.objectStore('rec')); t.oncomplete = () => res(out && out.result); t.onerror = () => rej(t.error); });
+}
+const dbPut = rec => tx('readwrite', s => s.put(rec));
+const dbDel = id => tx('readwrite', s => s.delete(id));
+
+const dbAll = () => tx('readonly', s => s.getAll()).then(a => (a || []).sort((x, y) => y.createdAt - x.createdAt));
+
+async function exportVoiceBackup() {
+  const status = $('backupStatus');
+  status.textContent = 'バックアップを作成しています…';
+  try {
+    const all = await dbAll();
+    const records = [];
+    for (const item of all) {
+      const rec = Object.assign({}, item);
+      delete rec.blob;
+      if (item.blob instanceof Blob) {
+        rec.blobType = item.blob.type || item.mime || 'application/octet-stream';
+        rec.blobBase64 = bufToB64(await item.blob.arrayBuffer());
+      } else {
+        rec.blobType = '';
+        rec.blobBase64 = '';
+      }
+      records.push(rec);
+    }
+    const payload = {
+      format: 'voice-pad-backup-v1',
+      createdAt: new Date().toISOString(),
+      recordCount: records.length,
+      records
+    };
+    const data = new Blob([JSON.stringify(payload)], { type: 'application/json;charset=utf-8' });
+    if (data.size > 100 * 1024 * 1024) throw new Error('バックアップが100MBを超えています。録音を分けて保存してください');
+    const url = URL.createObjectURL(data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'voice-pad-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    status.textContent = all.length + '件を書き出しました。JSONファイルを安全な場所に保管してください。';
+  } catch (e) {
+    status.textContent = 'バックアップ失敗: ' + (e.message || e);
+  }
+}
+
+async function importVoiceBackup(file) {
+  const status = $('backupStatus');
+  if (!file) return;
+  status.textContent = 'バックアップを確認しています…';
+  try {
+    if (file.size > 100 * 1024 * 1024) throw new Error('ファイルが100MBを超えています');
+    const payload = JSON.parse(await file.text());
+    if (!payload || payload.format !== 'voice-pad-backup-v1' || !Array.isArray(payload.records)) {
+      throw new Error('voice-padのバックアップJSONではありません');
+    }
+    let count = 0;
+    for (const item of payload.records) {
+      if (!item || typeof item.id !== 'string' || !item.id || item.id.length > 160) continue;
+      const rec = Object.assign({}, item);
+      const encoded = typeof rec.blobBase64 === 'string' ? rec.blobBase64 : '';
+      const mime = typeof rec.blobType === 'string' ? rec.blobType : (rec.mime || 'application/octet-stream');
+      delete rec.blobBase64; delete rec.blobType;
+      if (encoded) {
+        const raw = atob(encoded);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+        rec.blob = new Blob([bytes], { type: mime });
+      } else {
+        rec.blob = null;
+      }
+      await dbPut(rec);
+      count++;
+    }
+    recs = await dbAll();
+    render();
+    status.textContent = count + '件を復元しました。既存の同じIDはバックアップの内容で上書きしました。';
+  } catch (e) {
+    status.textContent = '復元失敗: ' + (e.message || e);
+  }
+}
+
+/* ── 状態 ── */
+let recs = [], busy = new Set(), previews = {}, aiBusy = new Set();
+let rec = null;   // 録音中の状態 {mr, stream, chunks, t0, purpose, ...}
+function toast(msg, err) { const b = $('banner'); b.hidden = !msg; b.className = 'banner' + (err ? ' err' : ''); b.textContent = msg || ''; if (msg && !err) setTimeout(() => { if (b.textContent === msg) b.hidden = true; }, 5000); }
+
+/* ── 録音 ── */
+function pickMime() {
+  const c = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
+  return typeof MediaRecorder !== 'undefined' ? (c.find(m => MediaRecorder.isTypeSupported(m)) || '') : '';
+}
+async function startRec(purpose) {
+  if (rec) return;
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') { toast('この画面では録音が使えません（https の Safari か、ホーム画面のアプリで開いてください）', true); return; }
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+  catch (e) {
+    toast(e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') ? 'マイクが許可されていません。設定でマイクを許可してください' : 'マイクを使えませんでした（' + (e && e.name) + '）', true); return;
+  }
+  const mime = pickMime();
+  let mr; try { mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {}); } catch (e) { stream.getTracks().forEach(t => t.stop()); toast('録音を始められませんでした（' + (e && e.name) + '）', true); return; }
+  const st = { mr, stream, chunks: [], t0: Date.now(), purpose, raf: 0, actx: null, wake: null, timer: 0 };
+  rec = st;
+  mr.ondataavailable = e => { if (e.data && e.data.size) st.chunks.push(e.data); };
+  mr.onstop = () => finishRec(st);
+  mr.start(1000);
+  try { st.actx = new (window.AudioContext || window.webkitAudioContext)(); const an = st.actx.createAnalyser(); an.fftSize = 512; st.actx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
+    const draw = () => { an.getByteTimeDomainData(buf); let m = 0; for (let i = 0; i < buf.length; i++) m = Math.max(m, Math.abs(buf[i] - 128)); $('meter').firstElementChild.style.width = Math.min(100, m / 64 * 100) + '%'; st.raf = requestAnimationFrame(draw); }; draw(); } catch (_) {}
+  try { if (navigator.wakeLock) st.wake = await navigator.wakeLock.request('screen'); } catch (_) {}
+  $('mic').classList.add('rec'); $('mic').textContent = '■'; $('meter').hidden = false;
+  $('hint').textContent = purpose === 'note' ? '録音中…もう一度タップで終わり' : '指示を話してください…もう一度タップで終わり';
+  st.timer = setInterval(() => { const ms = Date.now() - st.t0; $('timer').textContent = fmtDur(ms) + ' / ' + fmtDur(MAX_MS); if (ms >= MAX_MS) stopRec(); }, 250);
+  document.querySelectorAll('[data-instr]').forEach(b => b.disabled = true);
+}
+function stopRec() { if (rec && rec.mr.state !== 'inactive') rec.mr.stop(); }
+async function finishRec(st) {
+  clearInterval(st.timer); cancelAnimationFrame(st.raf);
+  try { st.stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+  try { st.actx && st.actx.close(); } catch (_) {}
+  try { st.wake && st.wake.release(); } catch (_) {}
+  rec = null;
+  $('mic').classList.remove('rec'); $('mic').textContent = '🎙'; $('meter').hidden = true; $('meter').firstElementChild.style.width = '0'; $('timer').textContent = '';
+  $('hint').textContent = 'タップして話す。もう一度タップで終わり。';
+  const type = (st.mr.mimeType || (st.chunks[0] && st.chunks[0].type) || 'audio/mp4');
+  const blob = new Blob(st.chunks, { type }), dur = Date.now() - st.t0;
+  if (!blob.size || dur < 600) { toast('録音が短すぎました', true); render(); return; }
+  if (st.purpose === 'note') {
+    const r = { id: 'r' + Date.now().toString(36), createdAt: st.t0, durMs: dur, mime: type, blob, status: 'pending', text: '', title: '', error: '' };
+    try { await dbPut(r); } catch (_) { toast('端末に録音を保存できませんでした。このまま文字起こしします', true); }
+    recs.unshift(r); render();
+    await transcribe(r.id);
+  } else {
+    await runInstruction(st.purpose.id, blob);
+  }
+}
+
+/* ── 通信 ── */
+async function api(path, init) {
+  const c = cfg();
+  if (!c.ep || !c.tk) throw Object.assign(new Error('エンドポイントとトークンを、下の設定に入れてください'), { soft: true });
+  let res;
+  try { res = await fetch(c.ep + path, Object.assign({}, init, { headers: Object.assign({ Authorization: 'Bearer ' + c.tk, 'Content-Type': 'application/json' }, (init && init.headers) || {}) })); }
+  catch (_) { throw Object.assign(new Error('回線がつながりません。録音は端末に残してあります'), { net: true }); }
+  return res;
+}
+async function toWav(blob) {
+  try {
+    const ab = await blob.arrayBuffer(), Ctx = window.AudioContext || window.webkitAudioContext, c = new Ctx();
+    const dec = await new Promise((res, rej) => { const p = c.decodeAudioData(ab, res, rej); if (p && p.catch) p.catch(rej); });
+    try { c.close(); } catch (_) {}
+    const oc = new OfflineAudioContext(1, Math.max(1, Math.ceil(dec.duration * 16000)), 16000), src = oc.createBufferSource();
+    src.buffer = dec; src.connect(oc.destination); src.start();
+    const out = await oc.startRendering();
+    return { mimeType: 'audio/wav', data: bufToB64(wavFromFloat32(out.getChannelData(0), 16000)) };
+  } catch (_) {
+    return { mimeType: (blob.type || 'audio/mp4').split(';')[0], data: bufToB64(await blob.arrayBuffer()) };   // 変換できないときは、そのまま送る
+  }
+}
+async function transcribeBlob(blob, mode) {
+  const w = await toWav(blob);
+  const res = await api('/transcribe', { method: 'POST', body: JSON.stringify({ data: w.data, mimeType: w.mimeType, mode }) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(errText(res.status, d.error, '文字起こし'));
+  return d.text || '';
+}
+async function transcribe(id) {
+  const r = recs.find(x => x.id === id); if (!r || !r.blob || busy.has(id)) return;
+  busy.add(id); r.error = ''; render();
+  try { r.text = await transcribeBlob(r.blob, cfg().mode); r.status = 'done'; r.error = ''; }
+  catch (e) { r.status = 'pending'; r.error = e.message || String(e); }
+  busy.delete(id); try { await dbPut(r); } catch (_) {} render();
+}
+async function callAI(prompt) {
+  const c = cfg();
+  const body = { provider: c.prov, model: c.prov === 'claude' ? 'claude-sonnet-4-6' : 'gemini-3.5-flash-lite', prompt };
+  if (c.prov === 'claude') body.maxTokens = 1500;
+  const res = await api('/ai', { method: 'POST', body: JSON.stringify(body) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(errText(res.status, d.error, 'AI'));
+  return String(d.text || '').trim();
+}
+async function runAction(id, k) {
+  const r = recs.find(x => x.id === id), a = AI_ACTIONS.find(x => x.k === k); if (!r || !a || aiBusy.has(id)) return;
+  const text = readText(id); if (!text) return;
+  aiBusy.add(id); previews[id] = null; render();
+  try { const out = await callAI(a.p + '\n\n' + text); previews[id] = { kind: a.kind, label: a.label, text: (a.kind === 'table' || a.kind === 'flow') ? cleanBlock(a.kind, out) : out }; if (!previews[id].text) throw new Error('うまく作れませんでした。もう一度試してください'); }
+  catch (e) { toast(e.message, true); }
+  aiBusy.delete(id); render();
+}
+async function runInstruction(id, blob) {
+  const r = recs.find(x => x.id === id); if (!r) return;
+  aiBusy.add(id); previews[id] = null; render();
+  try {
+    const instr = (await transcribeBlob(blob, 'verbatim')).trim();
+    if (!instr) throw new Error('指示を聞き取れませんでした');
+    const out = await callAI(buildEditPrompt(readText(id), instr));
+    previews[id] = { kind: 'text', label: '指示「' + instr.slice(0, 40) + '」', text: out };
+  } catch (e) { toast((e.message || String(e)) + '（指示の録音は残していません）', true); }
+  aiBusy.delete(id); render();
+}
+async function inboxClientId(id, kind, text) {
+  const source = String(text || '');
+  let suffix = '';
+  if (globalThis.crypto && crypto.subtle) {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
+    suffix = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 20);
+  } else {
+    let h = 2166136261;
+    for (let i = 0; i < source.length; i++) { h ^= source.charCodeAt(i); h = Math.imul(h, 16777619); }
+    suffix = (h >>> 0).toString(36);
+  }
+  return 'voice-pad-' + id + '-' + kind + '-' + suffix;
+}
+async function sendBlock(id) {   // 表・フローの案を、種類つきで預ける（受け取り側: table-pad）。声の記録そのものは 'sent' にしない
+  const r = recs.find(x => x.id === id), pv = previews[id]; if (!r || !pv || (pv.kind !== 'table' && pv.kind !== 'flow')) return;
+  busy.add(id); render();
+  try {
+    const title = (r.title || '').trim() || titleFromText(readText(id));
+    const clientId = await inboxClientId(id, pv.kind, pv.text);
+    const res = await api('/inbox', { method: 'POST', body: JSON.stringify({ text: pv.text, kind: pv.kind, title, clientId }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(errText(res.status, d.error, '預けること'));
+    previews[id] = null;
+    toast(KIND_NAME[pv.kind] + 'を預けました。table-pad を開くと入ります（起動・復帰のとき）');
+  } catch (e) { toast(e.message || String(e), true); }
+  busy.delete(id); render(true);
+}
+async function sendMemo(id) {
+  const r = recs.find(x => x.id === id); if (!r) return;
+  const body = composeMemo(r.title, readText(id)); if (!body) { toast('本文が空です', true); return; }
+  busy.add(id); render();
+  try {
+    const clientId = await inboxClientId(id, 'memo', body);
+    const res = await api('/inbox', { method: 'POST', body: JSON.stringify({ text: body, kind: 'memo', clientId }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(errText(res.status, d.error, '預けること'));
+    r.text = readText(id); r.status = 'sent'; r.blob = null; r.error = ''; r.sentAt = Date.now();
+    try { await dbPut(r); } catch (_) {}
+    toast('預けました。quick-ref を開くとメモになります（受け取りは起動・復帰のとき）');
+  } catch (e) { r.error = e.message || String(e); try { await dbPut(r); } catch (_) {} }
+  busy.delete(id); render();
+}
+
+/* ── 表示 ── */
+const readText = id => { const ta = document.getElementById('ta-' + id); const r = recs.find(x => x.id === id); return (ta ? ta.value : (r && r.text) || '').trim(); };
+function flushInputs() {   // 画面を作り直す前に、入力中の文字を取っておく（作り直しで消えないように）
+  document.querySelectorAll('textarea[data-ta]').forEach(t => { const r = recs.find(x => x.id === t.dataset.ta); if (r && !t.readOnly) r.text = t.value; });
+  document.querySelectorAll('input[data-ti]').forEach(t => { const r = recs.find(x => x.id === t.dataset.ti); if (r && !t.disabled) r.title = t.value; });
+}
+function render(skipFlush) {   // skipFlush: 入力欄ではなく、データ側を直したあとに呼ぶとき（古い入力値で上書きしない）
+  if (!skipFlush) flushInputs();
+  const pend = recs.filter(r => r.status === 'pending' && !busy.has(r.id)).length;
+  const list = $('list');
+  if (!recs.length) { list.innerHTML = '<div class="empty">まだ録音がありません。上のボタンを押して、話してみてください。</div>'; return; }
+  const active = document.activeElement && document.activeElement.id;
+  list.innerHTML = (pend > 1 ? '<div class="banner">文字起こし待ちが ' + pend + ' 件あります <button class="btn" data-all>まとめて実行</button></div>' : '') +
+    recs.slice(0, 40).map(r => {
+      const isBusy = busy.has(r.id), isAI = aiBusy.has(r.id), pv = previews[r.id];
+      const chip = r.status === 'sent' ? '<span class="chip sent">預けた</span>' : r.status === 'done' ? '<span class="chip done">文字になりました</span>' : '<span class="chip pending">' + (isBusy ? '処理中…' : '文字起こし待ち') + '</span>';
+      let h = '<div class="card" data-id="' + r.id + '"><div class="meta">' + chip + '<span>' + esc(new Date(r.createdAt).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })) + '</span><span>' + fmtDur(r.durMs) + '</span></div>';
+      if (r.error) h += '<div class="err-line">' + esc(r.error) + '</div>';
+      if (r.status === 'pending') {
+        h += '<div class="row"><button class="btn main" data-tr="' + r.id + '"' + (isBusy ? ' disabled' : '') + '>' + (isBusy ? '<span class="spin"></span>文字起こし中…' : '文字起こしする') + '</button><button class="btn ng" data-del="' + r.id + '">削除</button></div>';
+      } else {
+        h += '<input type="text" id="ti-' + r.id + '" data-ti="' + r.id + '" maxlength="60" placeholder="題（任意。メモの1行目になります）" value="' + esc(r.title || '') + '"' + (r.status === 'sent' ? ' disabled' : '') + '>';
+        h += '<textarea id="ta-' + r.id + '" data-ta="' + r.id + '"' + (r.status === 'sent' ? ' readonly' : '') + '>' + esc(r.text) + '</textarea>';
+        if (pv && (pv.kind === 'table' || pv.kind === 'flow')) h += '<div class="prev"><b>' + esc(pv.label) + '（案）</b><pre class="t" style="white-space:pre-wrap;margin:6px 0">' + esc(pv.text) + '</pre><div class="row"><button class="btn main" data-pvsend="' + r.id + '"' + (isBusy ? ' disabled' : '') + '>' + (isBusy ? '<span class="spin"></span>預けています…' : 'table-pad へ預ける') + '</button><button class="btn" data-pvcopy="' + r.id + '">コピー</button><button class="btn" data-drop="' + r.id + '">捨てる</button></div></div>';
+        else if (pv) h += '<div class="prev"><b>' + esc(pv.label) + (pv.kind === 'title' ? '（題の案）' : '（案）') + '</b><div class="t">' + esc(pv.text) + '</div><div class="row"><button class="btn main" data-use="' + r.id + '">' + (pv.kind === 'title' ? '題にする' : '置き換える') + '</button>' + (pv.kind === 'text' ? '<button class="btn" data-add="' + r.id + '">下に足す</button>' : '') + '<button class="btn" data-drop="' + r.id + '">捨てる</button></div></div>';
+        if (r.status === 'done') {
+          h += '<div class="row">' + AI_ACTIONS.map(a => '<button class="btn" data-act="' + a.k + '" data-id2="' + r.id + '"' + (isAI ? ' disabled' : '') + '>' + a.label + '</button>').join('') +
+            '<button class="btn" data-instr="' + r.id + '"' + (isAI || rec ? ' disabled' : '') + '>🎙 声で指示</button></div>';
+          if (isAI) h += '<div class="note"><span class="spin"></span>AI が考えています…</div>';
+          h += '<div class="row"><button class="btn main" data-send="' + r.id + '"' + (isBusy ? ' disabled' : '') + '>' + (isBusy ? '<span class="spin"></span>預けています…' : 'quick-ref へ預ける') + '</button><button class="btn" data-copy="' + r.id + '">コピー</button><button class="btn" data-tr="' + r.id + '">もう一度文字起こし</button><button class="btn ng" data-del="' + r.id + '">削除</button></div>';
+        } else {
+          h += '<div class="row"><button class="btn" data-copy="' + r.id + '">コピー</button><button class="btn ng" data-del="' + r.id + '">削除</button></div>';
+        }
+      }
+      return h + '</div>';
+    }).join('');
+  if (active) { const e = document.getElementById(active); if (e && e.focus) try { e.focus(); } catch (_) {} }
+}
+let saveT = 0;
+function queueSave(id) { clearTimeout(saveT); saveT = setTimeout(async () => { const r = recs.find(x => x.id === id); if (!r) return; const ta = document.getElementById('ta-' + id), ti = document.getElementById('ti-' + id); if (ta) r.text = ta.value; if (ti) r.title = ti.value; try { await dbPut(r); } catch (_) {} }, 600); }
+
+document.addEventListener('input', e => { const t = e.target; if (t.dataset.ta) queueSave(t.dataset.ta); if (t.dataset.ti) queueSave(t.dataset.ti); });
+document.addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const d = b.dataset;
+  if (b.id === 'mic') { rec ? stopRec() : startRec('note'); }
+  else if (d.tr) transcribe(d.tr);
+  else if (d.all !== undefined) { for (const r of recs.filter(x => x.status === 'pending')) await transcribe(r.id); }
+  else if (d.act) runAction(d.id2, d.act);
+  else if (d.instr) startRec({ id: d.instr });
+  else if (d.send) sendMemo(d.send);
+  else if (d.pvsend) sendBlock(d.pvsend);
+  else if (d.pvcopy) { const pv = previews[d.pvcopy]; if (pv) { try { await navigator.clipboard.writeText(pv.text); toast('コピーしました。table-pad の「📥 貼り付け」で入ります'); } catch (_) { toast('コピーできませんでした。文字を長押しして選んでください', true); } } }
+  else if (d.copy) { const t = composeMemo((recs.find(x => x.id === d.copy) || {}).title, readText(d.copy)); try { await navigator.clipboard.writeText(t); toast('コピーしました'); } catch (_) { toast('コピーできませんでした。文字を長押しして選んでください', true); } }
+  else if (d.del) { const r = recs.find(x => x.id === d.del); if (r && confirm(r.status === 'sent' ? 'この記録を消しますか？（預けたメモは消えません）' : '録音と文字を消します。よろしいですか？')) { await dbDel(r.id); recs = recs.filter(x => x.id !== r.id); render(); } }
+  else if (d.use) { const r = recs.find(x => x.id === d.use), pv = previews[d.use]; if (r && pv) { if (pv.kind === 'title') r.title = pv.text.split('\n')[0].slice(0, 60); else r.text = pv.text; previews[d.use] = null; await dbPut(r); render(true); } }
+  else if (d.add) { const r = recs.find(x => x.id === d.add), pv = previews[d.add]; if (r && pv) { r.text = readText(d.add) + '\n\n' + pv.text; previews[d.add] = null; await dbPut(r); render(true); } }
+  else if (d.drop) { previews[d.drop] = null; render(); }
+});
+$('cfgBtn').onclick = () => { $('cfg').open = !$('cfg').open; };
+$('saveCfg').onclick = () => {
+  const ep = $('ep').value.trim().replace(/\/+$/, ''), tk = $('tk').value.trim();
+  if (ep) ls.set(LSK.ep, ep); if (tk) ls.set(LSK.tk, tk); ls.set(LSK.mode, $('mode').value); ls.set(LSK.prov, $('prov').value);
+  $('tk').value = ''; $('tk').placeholder = ls.get(LSK.tk, '') ? '設定済み（変えるときだけ入力）' : ''; $('checkMsg').textContent = '保存しました'; toast('');
+};
+$('checkBtn').onclick = async () => {
+  $('checkMsg').innerHTML = '<span class="spin"></span>確認中…';
+  try { const res = await api('/inbox', { method: 'GET' }); if (res.status === 401) $('checkMsg').textContent = '✗ トークンが違います'; else if (res.status === 404) $('checkMsg').textContent = '✗ Worker に預かり箱がありません（Worker の更新が必要です）'; else if (!res.ok) $('checkMsg').textContent = '✗ つながりましたが、エラーです (' + res.status + ')'; else { const j = await res.json().catch(() => ({})); $('checkMsg').textContent = '✓ つながっています（預かり中 ' + ((j.items || []).length) + ' 件）'; } }
+  catch (e) { $('checkMsg').textContent = '✗ ' + (e.message || e); }
+};
+window.addEventListener('online', () => { if (recs.some(r => r.status === 'pending')) toast('回線が戻りました。「まとめて実行」か「文字起こしする」を押してください'); });
+
+$('backupExport').addEventListener('click', exportVoiceBackup);
+$('backupImport').addEventListener('click', () => $('backupFile').click());
+$('backupFile').addEventListener('change', async event => {
+  const file = event.target.files && event.target.files[0];
+  if (file && confirm('バックアップの内容を既存データに追加します。同じIDは上書きします。続けますか？')) {
+    await importVoiceBackup(file);
+  }
+  event.target.value = '';
+});
+
+(async function init() {
+  const c = cfg(); $('ep').value = c.ep; $('mode').value = c.mode === 'verbatim' ? 'verbatim' : 'clean'; $('prov').value = c.prov === 'claude' ? 'claude' : 'gemini';
+  $('tk').placeholder = c.tk ? '設定済み（変えるときだけ入力）' : '';
+  if (!c.ep || !c.tk) $('cfg').open = true;
+  try { recs = await dbAll(); const old = Date.now() - 30 * 86400e3; for (const r of recs.filter(x => x.status === 'sent' && (x.sentAt || x.createdAt) < old)) await dbDel(r.id); recs = recs.filter(r => !(r.status === 'sent' && (r.sentAt || r.createdAt) < old)); } catch (_) { recs = []; toast('この端末の保存領域を開けませんでした。録音は残せません', true); }
+  render();
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) navigator.serviceWorker.register('./sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
