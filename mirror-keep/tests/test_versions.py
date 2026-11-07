@@ -361,6 +361,185 @@ class VersionTests(Base):
         self.assertEqual(m["fileCount"], len(m["files"]))
 
 
+class BundleTests(Base):
+    """書き出し（iPhone持ち運び用バンドル）のテスト。"""
+
+    def out_dir(self):
+        d = self.tmp / "out"
+        d.mkdir(exist_ok=True)
+        return d
+
+    def export(self, vid, name=None):
+        out = self.out_dir() / (name or mk.default_bundle_name("demo-app", vid))
+        return mk.export_version_bundle(self.dest, self.key, vid, out), out
+
+    def test_export_roundtrip_matches_version_contents(self):
+        a = self.update()["versionId"]
+        result, out = self.export(a)
+        self.assertEqual(result["files"], 3)
+        self.assertTrue(mk.verify_bundle(out)["ok"])
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(bundle["format"], mk.BUNDLE_FORMAT)
+        self.assertEqual(bundle["version"]["id"], a)
+        self.assertEqual(bundle["projectKey"], self.key)
+        import base64
+        decoded = {f["path"]: base64.b64decode(f["data"]).decode("utf-8") for f in bundle["files"]}
+        self.assertEqual(decoded, snapshot_tree(self.vdir(a)))
+        self.assertNotIn(".env", decoded)  # 除外された秘密情報は含まれない
+
+    def test_export_is_read_only_for_versions_and_mirror(self):
+        a = self.update()["versionId"]
+        before_v, before_m = snapshot_tree(self.vdir(a)), snapshot_tree(self.target())
+        count = len(self.versions())
+        self.export(a)
+        self.assertEqual(snapshot_tree(self.vdir(a)), before_v)
+        self.assertEqual(snapshot_tree(self.target()), before_m)
+        self.assertEqual(len(self.versions()), count)  # 書き出しで保存版は増えない
+        self.assertTrue(mk.verify_version(self.dest, self.key, a)["ok"])
+        self.assertTrue(mk.verify_project(self.target())["ok"])
+
+    def test_old_version_can_be_exported(self):
+        a = self.update()["versionId"]
+        write(self.src / "index.html", "<html>v2</html>")
+        self.update()
+        _, out = self.export(a)
+        import base64
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        index = next(f for f in bundle["files"] if f["path"] == "index.html")
+        self.assertEqual(base64.b64decode(index["data"]).decode("utf-8"), "<html>v1</html>")
+
+    def test_japanese_and_binary_files_survive(self):
+        write(self.src / "日本語.txt", "こんにちは")
+        (self.src / "bin.dat").write_bytes(bytes(range(256)) * 3)
+        a = self.update()["versionId"]
+        _, out = self.export(a)
+        self.assertTrue(mk.verify_bundle(out)["ok"])
+        import base64
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        by = {f["path"]: base64.b64decode(f["data"]) for f in bundle["files"]}
+        self.assertEqual(by["日本語.txt"].decode("utf-8"), "こんにちは")
+        self.assertEqual(by["bin.dat"], bytes(range(256)) * 3)
+
+    def test_tampered_content_is_detected(self):
+        a = self.update()["versionId"]
+        _, out = self.export(a)
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        import base64
+        bundle["files"][0]["data"] = base64.b64encode(b"tampered").decode("ascii")
+        out.write_text(json.dumps(bundle), encoding="utf-8")
+        result = mk.verify_bundle(out)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("mismatch" in e for e in result["errors"]))
+
+    def test_missing_or_extra_file_in_bundle_is_detected(self):
+        a = self.update()["versionId"]
+        _, out = self.export(a)
+        base = json.loads(out.read_text(encoding="utf-8"))
+        missing = dict(base, files=base["files"][1:])
+        out.write_text(json.dumps(missing), encoding="utf-8")
+        self.assertFalse(mk.verify_bundle(out)["ok"])
+        import copy
+        extra = copy.deepcopy(base)
+        extra["files"].append(dict(extra["files"][0], path="evil.txt"))
+        out.write_text(json.dumps(extra), encoding="utf-8")
+        self.assertFalse(mk.verify_bundle(out)["ok"])  # filesSha256 / fileCount が合わない
+
+    def test_renamed_path_is_caught_only_by_files_digest(self):
+        # 内容・サイズ・件数が同じでパス名だけ入れ替えた場合は、filesSha256 だけが検出できる
+        a = self.update()["versionId"]
+        _, out = self.export(a)
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        bundle["files"][0]["path"] = "renamed-" + bundle["files"][0]["path"].replace("/", "-")
+        out.write_text(json.dumps(bundle), encoding="utf-8")
+        result = mk.verify_bundle(out)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["errors"], ["filesSha256 mismatch"])
+
+    def test_unsafe_path_is_rejected_even_with_consistent_digest(self):
+        # パス以外をすべて矛盾なく作り直しても、危険なパス自体が拒否されること
+        a = self.update()["versionId"]
+        _, out = self.export(a)
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        bundle["files"][0]["path"] = "../escape.txt"
+        bundle["filesSha256"] = mk.bundle_files_digest((f["path"], f["sha256"]) for f in bundle["files"])
+        out.write_text(json.dumps(bundle), encoding="utf-8")
+        result = mk.verify_bundle(out)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("invalid entry" in e for e in result["errors"]))
+
+    def test_unsafe_paths_and_garbage_are_rejected(self):
+        a = self.update()["versionId"]
+        _, out = self.export(a)
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        bundle["files"][0]["path"] = "../escape.txt"
+        out.write_text(json.dumps(bundle), encoding="utf-8")
+        self.assertFalse(mk.verify_bundle(out)["ok"])
+        out.write_text("not json", encoding="utf-8")
+        self.assertFalse(mk.verify_bundle(out)["ok"])
+        out.write_text(json.dumps({"format": "other"}), encoding="utf-8")
+        self.assertFalse(mk.verify_bundle(out)["ok"])
+
+    def test_tampered_version_is_not_exported(self):
+        a = self.update()["versionId"]
+        write(self.vdir(a) / "index.html", "<html>TAMPERED</html>")
+        out = self.out_dir() / mk.default_bundle_name("demo-app", a)
+        with self.assertRaises(IOError) as ctx:
+            mk.export_version_bundle(self.dest, self.key, a, out)
+        # 読み出し段階ではなく、最初の保存版検証（手順の先頭）で止まっていること
+        self.assertIn("保存版のSHA-256検証に失敗", str(ctx.exception))
+        self.assertFalse(out.exists())
+        self.assertEqual([p.name for p in self.out_dir().iterdir()], [])  # 一時ファイルも残らない
+
+    def test_existing_file_is_never_overwritten(self):
+        a = self.update()["versionId"]
+        out = self.out_dir() / mk.default_bundle_name("demo-app", a)
+        out.write_text("precious", encoding="utf-8")
+        with self.assertRaises(FileExistsError):
+            mk.export_version_bundle(self.dest, self.key, a, out)
+        self.assertEqual(out.read_text(encoding="utf-8"), "precious")
+
+    def test_output_inside_managed_folders_is_refused(self):
+        a = self.update()["versionId"]
+        for inside in (self.target(), mk.versions_root(self.dest, self.key), self.vdir(a), self.dest / mk.BACKUP_ROOT):
+            inside.mkdir(parents=True, exist_ok=True)
+            with self.assertRaises(ValueError):
+                mk.export_version_bundle(self.dest, self.key, a, inside / ("x" + mk.BUNDLE_SUFFIX))
+        self.assertTrue(mk.verify_version(self.dest, self.key, a)["ok"])  # 検証が崩れていない
+        self.assertTrue(mk.verify_project(self.target())["ok"])
+
+    def test_bad_name_and_bad_id_are_rejected(self):
+        a = self.update()["versionId"]
+        with self.assertRaises(ValueError):
+            mk.export_version_bundle(self.dest, self.key, a, self.out_dir() / "x.zip")
+        with self.assertRaises(ValueError):
+            mk.export_version_bundle(self.dest, self.key, "../x", self.out_dir() / ("x" + mk.BUNDLE_SUFFIX))
+        with self.assertRaises(ValueError):
+            mk.export_version_bundle(self.dest, self.key, a, self.tmp / "no-such-dir" / ("x" + mk.BUNDLE_SUFFIX))
+
+    def test_size_limit_stops_export(self):
+        a = self.update()["versionId"]
+        out = self.out_dir() / mk.default_bundle_name("demo-app", a)
+        with mock.patch.object(mk, "BUNDLE_MAX_BYTES", 10):
+            with self.assertRaises(ValueError):
+                mk.export_version_bundle(self.dest, self.key, a, out)
+        self.assertFalse(out.exists())
+
+    def test_failed_write_leaves_no_partial_file(self):
+        a = self.update()["versionId"]
+        out = self.out_dir() / mk.default_bundle_name("demo-app", a)
+        with mock.patch.object(mk, "verify_bundle", return_value={"ok": False, "checked": 0, "errors": ["x"]}):
+            with self.assertRaises(IOError):
+                mk.export_version_bundle(self.dest, self.key, a, out)
+        self.assertEqual([p.name for p in self.out_dir().iterdir()], [])
+
+    def test_digest_format_is_simple_and_reproducible(self):
+        # iPhone側(JavaScript)が同じ手順で再計算できる形式であること: "path\tsha256" を改行で連結 → SHA-256
+        import hashlib
+        pairs = [("b.txt", "22"), ("a.txt", "11")]
+        expected = hashlib.sha256("a.txt\t11\nb.txt\t22".encode("utf-8")).hexdigest()
+        self.assertEqual(mk.bundle_files_digest(pairs), expected)
+
+
 @unittest.skipUnless(FAKE_TK, "実Tkがある環境ではGUIスモークテストを行わない（ヘッドレス用スタブ専用）")
 class DialogSmokeTests(Base):
     """GUIの実描画は確認できないため、ダイアログの操作ロジックのみをスタブで確認する。"""
@@ -406,6 +585,27 @@ class DialogSmokeTests(Base):
         self.update()
         dlg, messages = self.make_dialog()
         dlg.restore_selected()
+        self.assertEqual(messages[-1][0], "showerror")
+
+    def test_export_flow(self):
+        a = self.update()["versionId"]
+        dlg, messages = self.make_dialog()
+        out_dir = self.tmp / "out"
+        out_dir.mkdir()
+        target = out_dir / mk.default_bundle_name("demo-app", a)
+        mk.filedialog.asksaveasfilename = lambda *args, **kwargs: str(target)
+        dlg.tree.selection_set(a)
+        dlg.export_selected()
+        self.assertEqual(messages[-1][0], "showinfo")
+        self.assertTrue(mk.verify_bundle(target)["ok"])
+        # キャンセル時は何もしない
+        before = len(messages)
+        mk.filedialog.asksaveasfilename = lambda *args, **kwargs: ""
+        dlg.export_selected()
+        self.assertEqual(len(messages), before)
+        # 同名が既にあれば上書きせずエラー
+        mk.filedialog.asksaveasfilename = lambda *args, **kwargs: str(target)
+        dlg.export_selected()
         self.assertEqual(messages[-1][0], "showerror")
 
 

@@ -2,6 +2,8 @@
 """Mirror Keep: incremental, hash-verified local copies for Windows and macOS."""
 from __future__ import annotations
 
+import base64
+import binascii
 import fnmatch
 import hashlib
 import json
@@ -24,6 +26,9 @@ BACKUP_ROOT = ".mirror-keep-backups"
 VERSION_ROOT = ".mirror-keep-versions"
 VERSION_ID_RE = re.compile(r"^\d{8}-\d{6}-\d{6}-[0-9a-f]{6}$")
 VERSION_SPACE_MARGIN = 16 * 1024 * 1024
+BUNDLE_FORMAT = "mirror-keep-bundle-v1"
+BUNDLE_SUFFIX = ".mkbundle.json"
+BUNDLE_MAX_BYTES = 200 * 1024 * 1024  # iPhoneのメモリ事情を考えた上限（元ファイル合計）
 EXCLUDED_DIRS = {
     ".git", ".wrangler", "node_modules", ".next", ".cache", ".parcel-cache",
     ".turbo", "coverage", ".venv", "venv", "__pycache__", ".pytest_cache",
@@ -517,6 +522,148 @@ def verify_version(destination_root: Path, key: str, version_id: str):
     return verify_project(vdir)
 
 
+# ---------------------------------------------------------------------------
+# 書き出し（iPhone等への持ち運び用）
+# 保存版を1つのJSONファイル（バンドル）にまとめる。サーバーも通信も不要。
+# 読み取り専用の操作で、保存版・ミラー・元アプリのフォルダーは一切変更しない。
+# ---------------------------------------------------------------------------
+def bundle_files_digest(entries) -> str:
+    """ファイル一覧全体のSHA-256（個々のファイルの欠落・追加・差し替えを検出するため）。
+    entries: (path, sha256) の列。iPhone側でも同じ手順で再計算できる単純な形式。"""
+    text = "\n".join(f"{p}\t{s}" for p, s in sorted(entries))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def default_bundle_name(app_name: str, version_id: str) -> str:
+    clean = re.sub(r"[^A-Za-z0-9._-]+", "-", app_name).strip(".-_") or "app"
+    return f"{clean[:48]}_{version_id}{BUNDLE_SUFFIX}"
+
+
+def _is_inside(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def export_version_bundle(destination_root: Path, key: str, version_id: str, out_path: Path):
+    """選択した保存版を、1ファイルのバンドルに書き出す。
+
+    ・書き出し前に保存版のSHA-256を確認する（壊れた版は書き出さない）
+    ・既存ファイルは上書きしない
+    ・書き出し先が保存先（ミラー/保存版/バックアップ）の中なら拒否する（検証が崩れるため）
+    ・一時ファイルに書いて検証し、成功したら正式な名前にする。失敗したら一時ファイルを消す
+    """
+    destination_root = destination_root.resolve()
+    check_version_id(version_id)
+    out_path = Path(out_path)
+    if not out_path.name.endswith(BUNDLE_SUFFIX):
+        raise ValueError(f"書き出しファイル名は「{BUNDLE_SUFFIX}」で終わる必要があります。")
+    if out_path.exists():
+        raise FileExistsError(f"同名のファイルが既にあります（上書きしません）: {out_path}")
+    parent = out_path.parent.resolve()
+    if not parent.is_dir():
+        raise ValueError(f"書き出し先のフォルダーがありません: {parent}")
+    for guarded in (destination_root / key, destination_root / VERSION_ROOT, destination_root / BACKUP_ROOT):
+        if _is_inside(parent, guarded):
+            raise ValueError(f"保存先の内部には書き出せません。別のフォルダーを選んでください: {guarded}")
+
+    vdir = versions_root(destination_root, key) / version_id
+    if not vdir.is_dir():
+        raise ValueError(f"保存版がありません: {version_id}")
+    check = verify_project(vdir)
+    if not check["ok"]:
+        detail = "; ".join((check["errors"] + check["extras"])[:5])
+        raise IOError(f"保存版のSHA-256検証に失敗したため書き出しを中止しました: {detail}")
+    manifest = read_manifest(vdir / MANIFEST)
+    meta = manifest.get("version") or {}
+    total = sum(int(e["bytes"]) for e in manifest["files"].values())
+    if total > BUNDLE_MAX_BYTES:
+        raise ValueError(
+            f"合計 {format_size(total)} は書き出しの上限 {format_size(BUNDLE_MAX_BYTES)} を超えています。"
+            "iPhoneで扱える大きさではないため中止しました。"
+        )
+
+    entries = []
+    for rel_text in sorted(manifest["files"]):
+        rel = safe_rel(rel_text)
+        data = (vdir / rel).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != manifest["files"][rel_text]["sha256"]:
+            raise IOError(f"読み出し中にファイルが変わりました: {rel_text}")
+        entries.append({
+            "path": rel_text, "sha256": digest, "bytes": len(data),
+            "encoding": "base64", "data": base64.b64encode(data).decode("ascii")
+        })
+    bundle = {
+        "format": BUNDLE_FORMAT,
+        "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "appName": manifest.get("appName", key),
+        "projectKey": key,
+        "version": {
+            "id": version_id, "created": meta.get("created", ""),
+            "kind": meta.get("kind", ""), "note": meta.get("note", "")
+        },
+        "fileCount": len(entries),
+        "totalBytes": total,
+        "filesSha256": bundle_files_digest((e["path"], e["sha256"]) for e in entries),
+        "files": entries
+    }
+    temp = out_path.with_name(out_path.name + f".tmp-{uuid.uuid4().hex[:8]}")
+    try:
+        temp.write_text(json.dumps(bundle, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        result = verify_bundle(temp)  # 書いた直後に、ファイルを読み直して全件再確認
+        if not result["ok"]:
+            raise IOError("書き出し後の検証に失敗しました: " + "; ".join(result["errors"][:5]))
+        os.replace(temp, out_path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    return {"path": out_path, "files": len(entries), "bytes": total, "fileBytes": out_path.stat().st_size}
+
+
+def verify_bundle(path: Path):
+    """バンドルを読み直して検証する。iPhone側が取り込み時に行う手順と同じ内容。"""
+    errors = []
+    try:
+        bundle = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "checked": 0, "errors": [f"読み込めません: {exc}"]}
+    if not isinstance(bundle, dict) or bundle.get("format") != BUNDLE_FORMAT or not isinstance(bundle.get("files"), list):
+        return {"ok": False, "checked": 0, "errors": ["認識できないバンドルです。"]}
+    seen, entries = set(), []
+    total = 0
+    for item in bundle["files"]:
+        try:
+            rel_text = item["path"]
+            safe_rel(rel_text)
+            if rel_text in seen:
+                errors.append(f"duplicate: {rel_text}")
+                continue
+            seen.add(rel_text)
+            if item.get("encoding") != "base64":
+                errors.append(f"unknown encoding: {rel_text}")
+                continue
+            data = base64.b64decode(item["data"], validate=True)
+            digest = hashlib.sha256(data).hexdigest()
+            if digest != item["sha256"]:
+                errors.append(f"hash mismatch: {rel_text}")
+            if len(data) != item["bytes"]:
+                errors.append(f"size mismatch: {rel_text}")
+            total += len(data)
+            entries.append((rel_text, item["sha256"]))
+        except (KeyError, TypeError, ValueError, binascii.Error) as exc:
+            errors.append(f"invalid entry: {exc}")
+    if bundle.get("fileCount") != len(bundle["files"]):
+        errors.append("fileCount mismatch")
+    if bundle.get("totalBytes") != total:
+        errors.append("totalBytes mismatch")
+    if bundle.get("filesSha256") != bundle_files_digest(entries):
+        errors.append("filesSha256 mismatch")
+    return {"ok": not errors, "checked": len(entries), "errors": errors}
+
+
 def _tree_matches_snapshot(tree: Path, files: dict) -> bool:
     seen = {}
     for p in tree.rglob("*"):
@@ -639,8 +786,8 @@ class VersionDialog(tk.Toplevel):
         self.verified = {}
         self.status = tk.StringVar()
         self.title(f"バージョン管理 — {app_name}")
-        self.geometry("880x460")
-        self.minsize(720, 380)
+        self.geometry("1000x460")
+        self.minsize(860, 380)
         self._build()
         self.refresh()
         self.transient(parent)
@@ -672,6 +819,7 @@ class VersionDialog(tk.Toplevel):
         buttons.grid(row=3, column=0, columnspan=2, sticky="w", pady=10)
         ttk.Button(buttons, text="選択版を検証", command=self.verify_selected).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="選択版に復元…", command=self.restore_selected).pack(side="left", padx=6)
+        ttk.Button(buttons, text="選択版を書き出し…", command=self.export_selected).pack(side="left", padx=6)
         ttk.Button(buttons, text="保存場所を開く", command=self.open_folder).pack(side="left", padx=6)
         ttk.Button(buttons, text="再読込", command=self.refresh).pack(side="left", padx=6)
         ttk.Button(buttons, text="閉じる", command=self.destroy).pack(side="left", padx=6)
@@ -769,6 +917,35 @@ class VersionDialog(tk.Toplevel):
             messagebox.showinfo(APP_TITLE, message, parent=self)
         except Exception as exc:
             self.refresh()
+            messagebox.showerror(APP_TITLE, str(exc), parent=self)
+
+    def export_selected(self):
+        try:
+            v = self.selected_version()
+            out = filedialog.asksaveasfilename(
+                parent=self, title="保存版の書き出し先",
+                initialfile=default_bundle_name(self.app_name, v["id"]),
+                defaultextension=BUNDLE_SUFFIX,
+                filetypes=[("Mirror Keep バンドル", "*" + BUNDLE_SUFFIX)],
+                confirmoverwrite=False
+            )
+            if not out:
+                return
+            self.config(cursor="watch")
+            self.update_idletasks()
+            try:
+                result = export_version_bundle(self.destination, self.key, v["id"], Path(out))
+            finally:
+                self.config(cursor="")
+            messagebox.showinfo(
+                APP_TITLE,
+                f"#{v['number']} を書き出しました（検証済み）。\n\n{result['path']}\n"
+                f"{result['files']} files / 元サイズ {format_size(result['bytes'])} / ファイル {format_size(result['fileBytes'])}\n\n"
+                "このファイルをiPhoneへ移して、取り込んでください。\n"
+                "書き出しは読み取りだけで、保存版やミラーは変更していません。",
+                parent=self
+            )
+        except Exception as exc:
             messagebox.showerror(APP_TITLE, str(exc), parent=self)
 
     def open_folder(self):
