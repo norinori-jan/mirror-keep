@@ -467,6 +467,32 @@ class BundleTests(Base):
         self.assertFalse(result["ok"])
         self.assertTrue(any("invalid entry" in e for e in result["errors"]))
 
+    def _tamper_consistent(self, mutate):
+        a = self.update()["versionId"]
+        _, out = self.export(a)
+        bundle = json.loads(out.read_text(encoding="utf-8"))
+        mutate(bundle)
+        bundle["filesSha256"] = mk.bundle_files_digest((f["path"], f["sha256"]) for f in bundle["files"])
+        out.write_text(json.dumps(bundle), encoding="utf-8")
+        return mk.verify_bundle(out)
+
+    def test_bundle_paths_follow_the_same_strict_rule_as_iphone(self):
+        # iPhone版は「\\」「//」「./」を拒否する。PC版の検証も同じ基準にそろえる
+        for bad in ("a\\b.txt", "dir//x.txt", "./x.txt", "dir/./x.txt", "/abs.txt", "x\0y"):
+            with self.subTest(path=bad):
+                result = self._tamper_consistent(lambda b, bad=bad: b["files"][0].__setitem__("path", bad))
+                self.assertFalse(result["ok"])
+
+    def test_bundle_key_and_version_id_are_checked(self):
+        r1 = self._tamper_consistent(lambda b: b.__setitem__("projectKey", "../evil"))
+        self.assertIn("projectKey が不正です", r1["errors"])
+        r2 = self._tamper_consistent(lambda b: b["version"].__setitem__("id", "x"))
+        self.assertIn("version.id が不正です", r2["errors"])
+
+    def test_bundle_sha256_must_be_lowercase_hex(self):
+        r = self._tamper_consistent(lambda b: b["files"][0].__setitem__("sha256", b["files"][0]["sha256"].upper()))
+        self.assertFalse(r["ok"])
+
     def test_unsafe_paths_and_garbage_are_rejected(self):
         a = self.update()["versionId"]
         _, out = self.export(a)
@@ -540,6 +566,66 @@ class BundleTests(Base):
         self.assertEqual(mk.bundle_files_digest(pairs), expected)
 
 
+class RegistrationAndIcloudTests(Base):
+    """登録の保存・登録を外す・iCloud書き出し先の検出。実際のホームには触れない。"""
+
+    def test_config_roundtrip_and_missing_file(self):
+        home = self.tmp / "home"
+        self.assertEqual(mk.load_config(home), {"destination": "", "projects": []})
+        projects = [{"path": Path("C:/a/table-pad"), "selected": True}, {"path": Path("C:/a/voice-pad"), "selected": False}]
+        mk.save_config("D:/mirror", projects, home)
+        got = mk.load_config(home)
+        self.assertEqual(got["destination"], "D:/mirror")
+        self.assertEqual([(x["path"], x["selected"]) for x in got["projects"]], [(x["path"], x["selected"]) for x in projects])
+
+    def test_broken_config_is_kept_aside_not_deleted(self):
+        home = self.tmp / "home"
+        path = mk.config_path(home)
+        path.parent.mkdir(parents=True)
+        path.write_text("{ broken", encoding="utf-8")
+        self.assertEqual(mk.load_config(home)["projects"], [])
+        self.assertEqual(path.with_name(path.name + ".broken").read_text(encoding="utf-8"), "{ broken")
+
+    def test_save_config_touches_only_the_config_file(self):
+        home = self.tmp / "home"
+        app = self.tmp / "app"
+        app.mkdir()
+        (app / "a.txt").write_text("x", encoding="utf-8")
+        mk.save_config("", [{"path": app, "selected": True}], home)
+        self.assertEqual((app / "a.txt").read_text(encoding="utf-8"), "x")
+        self.assertEqual(sorted(p.name for p in mk.config_path(home).parent.iterdir()), [mk.CONFIG_NAME])
+
+    def test_split_unselected_keeps_only_checked(self):
+        ps = [{"path": Path("a"), "selected": True}, {"path": Path("b"), "selected": False}, {"path": Path("c"), "selected": False}]
+        keep, drop = mk.split_unselected(ps)
+        self.assertEqual([x["path"].name for x in keep], ["a"])
+        self.assertEqual([x["path"].name for x in drop], ["b", "c"])
+
+    def test_icloud_not_found_returns_none_and_creates_nothing(self):
+        home = self.tmp / "nohome"
+        home.mkdir()
+        self.assertIsNone(mk.icloud_export_path("demo", "20260101-000000-000000-abcdef", home))
+        self.assertEqual(list(home.iterdir()), [])
+
+    def test_icloud_export_path_uses_mkexport_folder(self):
+        home = self.tmp / "h2"
+        (home / "iCloudDrive").mkdir(parents=True)
+        out = mk.icloud_export_path("demo-app", "20260101-000000-000000-abcdef", home)
+        self.assertEqual(out.parent, home / "iCloudDrive" / "MKExport")
+        self.assertTrue(out.name.endswith(mk.BUNDLE_SUFFIX))
+        self.assertTrue(out.parent.is_dir())
+
+    def test_export_into_icloud_folder_is_verified_and_does_not_overwrite(self):
+        a = self.update()["versionId"]
+        home = self.tmp / "h3"
+        (home / "iCloudDrive").mkdir(parents=True)
+        out = mk.icloud_export_path("demo-app", a, home)
+        mk.export_version_bundle(self.dest, self.key, a, out)
+        self.assertTrue(mk.verify_bundle(out)["ok"])
+        with self.assertRaises(Exception):
+            mk.export_version_bundle(self.dest, self.key, a, out)
+
+
 @unittest.skipUnless(FAKE_TK, "実Tkがある環境ではGUIスモークテストを行わない（ヘッドレス用スタブ専用）")
 class DialogSmokeTests(Base):
     """GUIの実描画は確認できないため、ダイアログの操作ロジックのみをスタブで確認する。"""
@@ -586,6 +672,28 @@ class DialogSmokeTests(Base):
         dlg, messages = self.make_dialog()
         dlg.restore_selected()
         self.assertEqual(messages[-1][0], "showerror")
+
+    def test_icloud_export_button_flow(self):
+        a = self.update()["versionId"]
+        dlg, messages = self.make_dialog()
+        home = self.tmp / "ichome"
+        (home / "iCloudDrive").mkdir(parents=True)
+        real = mk.icloud_export_path
+        mk.icloud_export_path = lambda name, vid, home_=None: real(name, vid, home)
+        try:
+            dlg.tree.selection_set(a)
+            dlg.export_icloud()
+            self.assertEqual(messages[-1][0], "showinfo")
+            out = home / "iCloudDrive" / "MKExport" / mk.default_bundle_name("demo-app", a)
+            self.assertTrue(mk.verify_bundle(out)["ok"])
+            # iCloudが無い場合は、案内を出して何も作らない
+            mk.icloud_export_path = lambda *args, **kwargs: None
+            before = len(list((home / "iCloudDrive" / "MKExport").iterdir()))
+            dlg.export_icloud()
+            self.assertEqual(messages[-1][0], "showinfo")
+            self.assertEqual(len(list((home / "iCloudDrive" / "MKExport").iterdir())), before)
+        finally:
+            mk.icloud_export_path = real
 
     def test_export_flow(self):
         a = self.update()["versionId"]

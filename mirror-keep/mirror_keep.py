@@ -623,6 +623,85 @@ def export_version_bundle(destination_root: Path, key: str, version_id: str, out
     return {"path": out_path, "files": len(entries), "bytes": total, "fileBytes": out_path.stat().st_size}
 
 
+ICLOUD_EXPORT_FOLDER = "MKExport"
+
+
+def find_icloud_drive(home=None):
+    """iCloud Drive（Windows版iCloud / macOS）の同期フォルダーを探す。無ければ None。"""
+    home = Path(home) if home else Path.home()
+    for cand in (home / "iCloudDrive", home / "iCloud Drive",
+                 home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"):
+        if cand.is_dir():
+            return cand
+    return None
+
+
+def icloud_export_path(app_name: str, version_id: str, home=None):
+    """iCloud Drive の MKExport フォルダーへの書き出し先を返す（フォルダーが無ければ作る）。iCloudが無ければ None。"""
+    base = find_icloud_drive(home)
+    if base is None:
+        return None
+    folder = base / ICLOUD_EXPORT_FOLDER
+    folder.mkdir(exist_ok=True)
+    return folder / default_bundle_name(app_name, version_id)
+
+
+CONFIG_NAME = "mirror-keep-config.json"
+
+
+def config_path(home=None) -> Path:
+    return (Path(home) if home else Path.home()) / ".mirror-keep" / CONFIG_NAME
+
+
+def load_config(home=None):
+    """登録したアプリと保存先を読み込む。無い・壊れている場合は空の設定（元のファイルは変更しない）。"""
+    path = config_path(home)
+    if not path.is_file():
+        return {"destination": "", "projects": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        projects = [{"path": Path(x["path"]), "selected": bool(x.get("selected", True))}
+                    for x in data.get("projects", []) if isinstance(x, dict) and x.get("path")]
+        return {"destination": str(data.get("destination", "")), "projects": projects}
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        try:  # 壊れた設定は消さずに脇へ退避してから、空で始める
+            os.replace(path, path.with_name(path.name + ".broken"))
+        except OSError:
+            pass
+        return {"destination": "", "projects": []}
+
+
+def save_config(destination: str, projects, home=None):
+    """登録の一覧だけを保存する（アプリのファイルやミラーには触れない）。一時ファイル経由で書き換える。"""
+    path = config_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {"destination": destination,
+            "projects": [{"path": str(x["path"]), "selected": bool(x["selected"])} for x in projects]}
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def split_unselected(projects):
+    """登録を外す対象（今回✓が付いていないもの）と、残すものに分ける。"""
+    keep = [x for x in projects if x["selected"]]
+    drop = [x for x in projects if not x["selected"]]
+    return keep, drop
+
+
+BUNDLE_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def strict_bundle_path(raw) -> str:
+    """バンドル内のパスの検査。iPhone版（safePath）と同じ基準。区切りは「/」だけ。"""
+    if not isinstance(raw, str) or not raw or "\\" in raw or "\0" in raw or raw.startswith("/"):
+        raise ValueError(f"不正な相対パス: {raw!r}")
+    if any(part in ("", ".", "..") for part in raw.split("/")):
+        raise ValueError(f"不正な相対パス: {raw!r}")
+    return raw
+
+
 def verify_bundle(path: Path):
     """バンドルを読み直して検証する。iPhone側が取り込み時に行う手順と同じ内容。"""
     errors = []
@@ -634,10 +713,17 @@ def verify_bundle(path: Path):
         return {"ok": False, "checked": 0, "errors": ["認識できないバンドルです。"]}
     seen, entries = set(), []
     total = 0
+    if not isinstance(bundle.get("projectKey"), str) or not BUNDLE_KEY_RE.match(bundle["projectKey"]):
+        errors.append("projectKey が不正です")
+    vid = (bundle.get("version") or {}).get("id") if isinstance(bundle.get("version"), dict) else None
+    if not isinstance(vid, str) or not VERSION_ID_RE.match(vid):
+        errors.append("version.id が不正です")
     for item in bundle["files"]:
         try:
             rel_text = item["path"]
-            safe_rel(rel_text)
+            strict_bundle_path(rel_text)
+            if not isinstance(item["sha256"], str) or not SHA256_RE.match(item["sha256"]):
+                raise ValueError("sha256 の形式が不正です")
             if rel_text in seen:
                 errors.append(f"duplicate: {rel_text}")
                 continue
@@ -820,6 +906,7 @@ class VersionDialog(tk.Toplevel):
         ttk.Button(buttons, text="選択版を検証", command=self.verify_selected).pack(side="left", padx=(0, 6))
         ttk.Button(buttons, text="選択版に復元…", command=self.restore_selected).pack(side="left", padx=6)
         ttk.Button(buttons, text="選択版を書き出し…", command=self.export_selected).pack(side="left", padx=6)
+        ttk.Button(buttons, text="iCloud Driveへ書き出し", command=self.export_icloud).pack(side="left", padx=6)
         ttk.Button(buttons, text="保存場所を開く", command=self.open_folder).pack(side="left", padx=6)
         ttk.Button(buttons, text="再読込", command=self.refresh).pack(side="left", padx=6)
         ttk.Button(buttons, text="閉じる", command=self.destroy).pack(side="left", padx=6)
@@ -919,6 +1006,22 @@ class VersionDialog(tk.Toplevel):
             self.refresh()
             messagebox.showerror(APP_TITLE, str(exc), parent=self)
 
+    def _do_export(self, out_path, hint):
+        v = self.selected_version()
+        self.config(cursor="watch")
+        self.update_idletasks()
+        try:
+            result = export_version_bundle(self.destination, self.key, v["id"], Path(out_path))
+        finally:
+            self.config(cursor="")
+        messagebox.showinfo(
+            APP_TITLE,
+            f"#{v['number']} を書き出しました（検証済み）。\n\n{result['path']}\n"
+            f"{result['files']} files / 元サイズ {format_size(result['bytes'])} / ファイル {format_size(result['fileBytes'])}\n\n"
+            f"{hint}\n書き出しは読み取りだけで、保存版やミラーは変更していません。",
+            parent=self
+        )
+
     def export_selected(self):
         try:
             v = self.selected_version()
@@ -931,20 +1034,27 @@ class VersionDialog(tk.Toplevel):
             )
             if not out:
                 return
-            self.config(cursor="watch")
-            self.update_idletasks()
-            try:
-                result = export_version_bundle(self.destination, self.key, v["id"], Path(out))
-            finally:
-                self.config(cursor="")
-            messagebox.showinfo(
-                APP_TITLE,
-                f"#{v['number']} を書き出しました（検証済み）。\n\n{result['path']}\n"
-                f"{result['files']} files / 元サイズ {format_size(result['bytes'])} / ファイル {format_size(result['fileBytes'])}\n\n"
-                "このファイルをiPhoneへ移して、取り込んでください。\n"
-                "書き出しは読み取りだけで、保存版やミラーは変更していません。",
-                parent=self
-            )
+            self._do_export(out, "このファイルをiPhoneへ移して、取り込んでください。")
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, str(exc), parent=self)
+
+    def export_icloud(self):
+        try:
+            v = self.selected_version()
+            out = icloud_export_path(self.app_name, v["id"])
+            if out is None:
+                messagebox.showinfo(
+                    APP_TITLE,
+                    "iCloud Drive のフォルダーが見つかりません。\n"
+                    "Windows版iCloudをインストールしてサインインし、「iCloud Drive」をオンにすると、"
+                    "ユーザーフォルダーに「iCloudDrive」ができます。\n"
+                    "代わりに「選択版を書き出し…」で、好きな場所へ書き出せます。",
+                    parent=self
+                )
+                return
+            self._do_export(out, "iCloud Drive の「" + ICLOUD_EXPORT_FOLDER + "」に入れました。同期されると、iPhoneのファイルアプリの"
+                                 "「iCloud Drive」→「" + ICLOUD_EXPORT_FOLDER + "」に出ます。\n"
+                                 "（iPhoneの設定で iCloud Drive がオンである必要があります。同期にはネット接続が必要です。）")
         except Exception as exc:
             messagebox.showerror(APP_TITLE, str(exc), parent=self)
 
@@ -970,10 +1080,13 @@ class MirrorKeepApp:
         self.root.title("Mirror Keep — Windows / macOS")
         self.root.geometry("900x640")
         self.root.minsize(720, 500)
-        self.projects = []
-        self.destination = tk.StringVar()
+        cfg = load_config()
+        self.projects = cfg["projects"]
+        self.destination = tk.StringVar(value=cfg["destination"])
         self.status = tk.StringVar(value="ミラー対象のアプリを追加してください。")
         self._build()
+        self.destination.trace_add("write", lambda *_: self._save_config())
+        self.refresh()
 
     def _build(self):
         outer = ttk.Frame(self.root, padding=14)
@@ -995,7 +1108,8 @@ class MirrorKeepApp:
         buttons = ttk.Frame(actions)
         buttons.grid(row=0, column=0, sticky="w", pady=(0, 8))
         ttk.Button(buttons, text="アプリを追加", command=self.add_project).pack(side="left", padx=(0, 6))
-        ttk.Button(buttons, text="選択を削除", command=self.remove_project).pack(side="left", padx=6)
+        ttk.Button(buttons, text="選んだ行の登録を外す", command=self.remove_project).pack(side="left", padx=6)
+        ttk.Button(buttons, text="対象外の登録をまとめて外す", command=self.remove_unselected).pack(side="left", padx=6)
         ttk.Button(buttons, text="全選択", command=lambda: self.set_all(True)).pack(side="left", padx=6)
         ttk.Button(buttons, text="全解除", command=lambda: self.set_all(False)).pack(side="left", padx=6)
 
@@ -1039,13 +1153,35 @@ class MirrorKeepApp:
         self.projects.append({"path": path, "selected": True})
         self.refresh()
 
+    def _save_config(self):
+        try:
+            save_config(self.destination.get(), self.projects)
+        except OSError as exc:
+            self.status.set(f"登録の保存に失敗しました（今回の操作は続けられます）: {exc}")
+
     def remove_project(self):
         item = self.tree.selection()
         if not item:
             return
         index = self.tree.index(item[0])
         if 0 <= index < len(self.projects):
+            name = self.projects[index]["path"].name
+            if not messagebox.askyesno(APP_TITLE, f"「{name}」の登録を一覧から外します。\n"
+                                       "元アプリのフォルダー、ミラー、保存版、バックアップは削除されません。", parent=self.root):
+                return
             self.projects.pop(index)
+        self.refresh()
+
+    def remove_unselected(self):
+        keep, drop = split_unselected(self.projects)
+        if not drop:
+            messagebox.showinfo(APP_TITLE, "対象外（✓なし）の登録はありません。", parent=self.root)
+            return
+        names = "\n".join("・" + x["path"].name for x in drop[:15]) + ("\n…" if len(drop) > 15 else "")
+        if not messagebox.askyesno(APP_TITLE, f"✓の付いていない {len(drop)} 件の登録を一覧から外します。\n{names}\n\n"
+                                   "元アプリのフォルダー、ミラー、保存版、バックアップは削除されません。", parent=self.root):
+            return
+        self.projects[:] = keep
         self.refresh()
 
     def set_all(self, selected):
@@ -1069,6 +1205,7 @@ class MirrorKeepApp:
             path = item["path"]
             state = "選択中" if item["selected"] else "対象外"
             self.tree.insert("", "end", values=("✓" if item["selected"] else "—", str(path), state))
+        self._save_config()
 
     def selected_projects(self):
         return [x["path"] for x in self.projects if x["selected"]]
