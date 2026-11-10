@@ -859,6 +859,32 @@ def update_project_with_version(source: Path, destination_root: Path):
     return result
 
 
+def update_and_export_all(sources, destination_root: Path, out_dir: Path):
+    """今回✓のアプリを順に「差分更新→保存版→書き出し」する。1つ失敗しても、残りは続ける。
+
+    戻り値: アプリごとの結果 {"name", "ok", "path"(書き出し先), "versionId", "error"}。
+    書き出しは検証つきで、既存のファイルは上書きしない。保存版の作成に失敗したアプリは書き出さない。
+    """
+    destination_root = Path(destination_root).resolve()
+    out_dir = Path(out_dir)
+    results = []
+    for source in sources:
+        item = {"name": Path(source).name, "ok": False, "path": None, "versionId": None, "error": None}
+        try:
+            r = update_project_with_version(Path(source), destination_root)
+            if r["versionError"] or not r["versionId"]:
+                item["error"] = "差分更新は完了しましたが、保存版を作れなかったため、書き出しはしていません: " + str(r["versionError"])
+            else:
+                item["versionId"] = r["versionId"]
+                out = out_dir / default_bundle_name(item["name"], r["versionId"])
+                export_version_bundle(destination_root, r["key"], r["versionId"], out)
+                item["ok"], item["path"] = True, out
+        except Exception as exc:
+            item["error"] = f"{type(exc).__name__}: {exc}"
+        results.append(item)
+    return results
+
+
 class VersionDialog(tk.Toplevel):
     KIND_LABEL = {"update": "更新", "pre-restore": "復元前"}
 
@@ -1130,6 +1156,7 @@ class MirrorKeepApp:
         ttk.Button(ops, text="③ SHA-256検証", command=self.verify).pack(side="left", padx=6)
         ttk.Button(ops, text="④ 最新バックアップを復元", command=self.restore).pack(side="left", padx=6)
         ttk.Button(ops, text="⑤ バージョン管理…", command=self.open_versions).pack(side="left", padx=6)
+        ttk.Button(ops, text="⑥ 今日の分を書き出し", command=self.update_and_export).pack(side="left", padx=6)
 
         ttk.Label(outer, textvariable=self.status, wraplength=850).grid(row=4, column=0, sticky="ew")
         ttk.Label(
@@ -1281,6 +1308,45 @@ class MirrorKeepApp:
         except Exception as exc:
             messagebox.showerror(APP_TITLE, str(exc))
             self.status.set("更新を中断しました。")
+
+    def update_and_export(self):
+        """今回✓のアプリすべてを、差分更新→保存版→書き出しまで、まとめて行う。"""
+        try:
+            dest = self.destination_path()
+            selected = self.selected_projects()
+            if not selected:
+                raise ValueError("今回ミラーするアプリを選択してください。")
+            icloud = find_icloud_drive()
+            if icloud is not None:
+                out_dir = icloud / ICLOUD_EXPORT_FOLDER
+                where = f"iCloud Drive の「{ICLOUD_EXPORT_FOLDER}」"
+            else:
+                chosen = filedialog.askdirectory(title="書き出し先のフォルダー（iCloud Driveが見つからないため選びます）")
+                if not chosen:
+                    return
+                out_dir = Path(chosen)
+                where = str(out_dir)
+            names = "\n".join("・" + Path(x).name for x in selected[:15]) + ("\n…" if len(selected) > 15 else "")
+            if not messagebox.askyesno(APP_TITLE, f"✓の付いた {len(selected)} 件を、差分更新→保存版の作成→書き出しまで行います。\n{names}\n\n書き出し先: {where}\n"
+                                       "元アプリのフォルダーは変更しません。保存版は削除しません。"):
+                return
+            out_dir.mkdir(exist_ok=True)
+            self.root.config(cursor="watch")
+            self.root.update_idletasks()
+            try:
+                results = update_and_export_all(selected, dest, out_dir)
+            finally:
+                self.root.config(cursor="")
+            ok = [r for r in results if r["ok"]]
+            ng = [r for r in results if not r["ok"]]
+            lines = [f"成功 {len(ok)} 件 / 失敗 {len(ng)} 件"]
+            lines += [f"✓ {r['name']} → {Path(r['path']).name}" for r in ok]
+            lines += [f"✗ {r['name']}: {r['error']}" for r in ng]
+            self.status.set("\n".join(lines))
+            (messagebox.showwarning if ng else messagebox.showinfo)(APP_TITLE, "\n".join(lines) + f"\n\n書き出し先: {where}")
+        except Exception as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+            self.status.set("一括書き出しを中断しました。")
 
     def verify(self):
         try:

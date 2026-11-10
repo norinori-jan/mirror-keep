@@ -566,6 +566,63 @@ class BundleTests(Base):
         self.assertEqual(mk.bundle_files_digest(pairs), expected)
 
 
+class BatchExportTests(Base):
+    """「今日の分を一括で書き出し」。一時フォルダーだけを使う。"""
+
+    def make_second_app(self):
+        src2 = self.tmp / "voice-pad"
+        write(src2 / "index.html", "voice v1")
+        return src2
+
+    def test_batch_updates_versions_and_exports_every_app(self):
+        src2 = self.make_second_app()
+        out = self.tmp / "outbatch"
+        out.mkdir()
+        results = mk.update_and_export_all([self.src, src2], self.dest, out)
+        self.assertEqual([r["ok"] for r in results], [True, True])
+        for r in results:
+            self.assertTrue(mk.verify_bundle(r["path"])["ok"])
+            self.assertEqual(Path(r["path"]).parent, out)
+        self.assertEqual(len(self.versions()), 1)  # 元アプリには保存版が1つできた
+
+    def test_one_failure_does_not_stop_the_others_or_touch_sources(self):
+        src2 = self.make_second_app()
+        out = self.tmp / "outbatch"
+        out.mkdir()
+        missing = self.tmp / "no-such-app"
+        before = snapshot_tree(self.src)
+        results = mk.update_and_export_all([missing, self.src, src2], self.dest, out)
+        self.assertEqual([r["ok"] for r in results], [False, True, True])
+        self.assertIn("元フォルダーがありません", results[0]["error"])
+        self.assertEqual(snapshot_tree(self.src), before)
+
+    def test_export_failure_is_reported_and_existing_files_are_not_overwritten(self):
+        out = self.tmp / "no-such-out-dir"  # 書き出し先が無い → 書き出しだけ失敗、保存版は残る
+        results = mk.update_and_export_all([self.src], self.dest, out)
+        self.assertFalse(results[0]["ok"])
+        self.assertIsNotNone(results[0]["versionId"])
+        self.assertEqual(len(self.versions()), 1)
+
+    def test_no_bundle_is_exported_when_the_version_could_not_be_saved(self):
+        out = self.tmp / "outbatch"
+        out.mkdir()
+        with mock.patch.object(mk, "save_version", side_effect=OSError("disk full")):
+            results = mk.update_and_export_all([self.src], self.dest, out)
+        self.assertFalse(results[0]["ok"])
+        self.assertIn("保存版を作れなかった", results[0]["error"])
+        self.assertEqual(list(out.iterdir()), [])
+
+    def test_nothing_is_deleted_by_batch(self):
+        self.update()
+        existing = [v["id"] for v in self.versions()]
+        out = self.tmp / "outbatch"
+        out.mkdir()
+        mk.update_and_export_all([self.src], self.dest, out)
+        now = [v["id"] for v in self.versions()]
+        self.assertTrue(set(existing) <= set(now))
+        self.assertEqual(len(now), len(existing) + 1)
+
+
 class RegistrationAndIcloudTests(Base):
     """登録の保存・登録を外す・iCloud書き出し先の検出。実際のホームには触れない。"""
 
