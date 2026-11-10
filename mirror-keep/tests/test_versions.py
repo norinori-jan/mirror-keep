@@ -623,6 +623,45 @@ class BatchExportTests(Base):
         self.assertEqual(len(now), len(existing) + 1)
 
 
+class FindAppFoldersTests(Base):
+    """親フォルダーからのまとめて追加（探すだけ。何も作らず、何も変更しない）。"""
+
+    def build(self):
+        root = self.tmp / "apps"
+        write(root / "table-pad" / "index.html", "t")
+        write(root / "table-pad" / "manifest.webmanifest", "{}")
+        write(root / "voice-pad" / "index.html", "v")
+        write(root / "notes-only" / "readme.txt", "no index")
+        write(root / ".hidden" / "index.html", "h")
+        write(root / "node_modules" / "index.html", "n")
+        write(root / "file.html", "x")
+        return root
+
+    def test_finds_apps_with_index_html_and_flags_pwa(self):
+        root = self.build()
+        found = mk.find_app_folders(root)
+        self.assertEqual([(x["path"].name, x["pwa"]) for x in found], [("table-pad", True), ("voice-pad", False)])
+
+    def test_registered_and_destination_are_excluded(self):
+        root = self.build()
+        found = mk.find_app_folders(root, registered=[root / "table-pad"], destination=root / "voice-pad")
+        self.assertEqual(found, [])
+
+    def test_destination_containing_or_inside_is_excluded(self):
+        root = self.build()
+        found = mk.find_app_folders(root, destination=root / "table-pad" / "mirror")
+        self.assertEqual([x["path"].name for x in found], ["voice-pad"])
+
+    def test_search_only_reads(self):
+        root = self.build()
+        before = sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+        mk.find_app_folders(root)
+        self.assertEqual(sorted(p.relative_to(root).as_posix() for p in root.rglob("*")), before)
+
+    def test_missing_parent_returns_empty(self):
+        self.assertEqual(mk.find_app_folders(self.tmp / "nope"), [])
+
+
 class RegistrationAndIcloudTests(Base):
     """登録の保存・登録を外す・iCloud書き出し先の検出。実際のホームには触れない。"""
 

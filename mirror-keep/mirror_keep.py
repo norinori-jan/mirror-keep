@@ -646,6 +646,40 @@ def icloud_export_path(app_name: str, version_id: str, home=None):
     return folder / default_bundle_name(app_name, version_id)
 
 
+def find_app_folders(parent: Path, registered=(), destination=None):
+    """親フォルダーの直下から、アプリらしいフォルダー（index.html がある）を探す。読み取りだけ。
+
+    除外: 隠しフォルダー、キャッシュ類（EXCLUDED_DIRS）、登録済み、保存先そのもの／保存先の中／保存先を含むもの。
+    戻り値: [{"path": Path, "pwa": bool}]（名前順）。pwa は manifest か service worker らしきファイルがあるか。
+    """
+    parent = Path(parent).resolve()
+    reg = {Path(x).resolve() for x in registered}
+    dest = Path(destination).resolve() if destination else None
+    found = []
+    try:
+        children = sorted(parent.iterdir(), key=lambda c: c.name.lower())
+    except OSError:
+        return found
+    for child in children:
+        try:
+            if child.is_symlink() or not child.is_dir():
+                continue
+            if child.name.startswith(".") or child.name in EXCLUDED_DIRS:
+                continue
+            real = child.resolve()
+            if real in reg:
+                continue
+            if dest and (real == dest or dest in real.parents or real in dest.parents):
+                continue
+            if not (child / "index.html").is_file():
+                continue
+            pwa = any((child / n).is_file() for n in ("manifest.webmanifest", "manifest.json", "sw.js"))
+            found.append({"path": real, "pwa": pwa})
+        except OSError:
+            continue
+    return found
+
+
 CONFIG_NAME = "mirror-keep-config.json"
 
 
@@ -1134,6 +1168,7 @@ class MirrorKeepApp:
         buttons = ttk.Frame(actions)
         buttons.grid(row=0, column=0, sticky="w", pady=(0, 8))
         ttk.Button(buttons, text="アプリを追加", command=self.add_project).pack(side="left", padx=(0, 6))
+        ttk.Button(buttons, text="フォルダーからまとめて追加", command=self.add_projects_from_folder).pack(side="left", padx=6)
         ttk.Button(buttons, text="選んだ行の登録を外す", command=self.remove_project).pack(side="left", padx=6)
         ttk.Button(buttons, text="対象外の登録をまとめて外す", command=self.remove_unselected).pack(side="left", padx=6)
         ttk.Button(buttons, text="全選択", command=lambda: self.set_all(True)).pack(side="left", padx=6)
@@ -1179,6 +1214,24 @@ class MirrorKeepApp:
             return
         self.projects.append({"path": path, "selected": True})
         self.refresh()
+
+    def add_projects_from_folder(self):
+        """アプリを並べて置いてある親フォルダーを選ぶと、中のアプリをまとめて登録する（今回は未選択で登録）。"""
+        parent = filedialog.askdirectory(title="アプリが並んでいる親フォルダー（例: C:\\Users\\norin）")
+        if not parent:
+            return
+        dest = self.destination.get().strip() or None
+        found = find_app_folders(Path(parent), [x["path"] for x in self.projects], dest)
+        if not found:
+            messagebox.showinfo(APP_TITLE, "追加できるアプリが見つかりませんでした。\n（直下のフォルダーのうち、index.html があり、未登録のものが対象です）", parent=self.root)
+            return
+        names = "\n".join(("・" + x["path"].name + ("（PWA）" if x["pwa"] else "")) for x in found[:25]) + ("\n…" if len(found) > 25 else "")
+        if not messagebox.askyesno(APP_TITLE, f"{len(found)} 件を登録します。\n{names}\n\n登録するだけで、コピーはしません。今回の対象（✓）は、あとで選んでください。", parent=self.root):
+            return
+        for x in found:
+            self.projects.append({"path": x["path"], "selected": False})
+        self.refresh()
+        self.status.set(f"{len(found)} 件を登録しました。今日使うアプリの「今回」を✓にして、更新・書き出しを行ってください。")
 
     def _save_config(self):
         try:
